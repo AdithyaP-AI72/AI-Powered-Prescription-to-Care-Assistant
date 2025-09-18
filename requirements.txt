@@ -1,1 +1,19 @@
+fastapi
+uvicorn
+python-multipart
+pytesseract
+opencv-python
+Pillow
+langchain
+openai
+google-api-python-client
+google-auth
+google-auth-oauthlib
+firebase-admin
+twilio
+schedule
+sqlalchemy
+pandas
+scikit-learn
+nltk
 

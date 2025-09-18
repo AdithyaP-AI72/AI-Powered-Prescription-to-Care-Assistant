@@ -1,4 +1,4 @@
-🩺 AI Prescription-to-Care Assistant
+# **🩺 AI Prescription-to-Care Assistant** 
 
 AI-powered healthcare companion that turns a doctor’s prescription into a personalized care plan.
 

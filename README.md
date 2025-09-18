@@ -82,6 +82,7 @@ Food interactions (“Don’t take this antibiotic with milk”).
 Generic health tips (hydration, sleep).
 
 Provide a simple weekly summary report.
+
 🛠️ Tech Stack
 
 Frontend: React / Next.js + TailwindCSS

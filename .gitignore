@@ -1,0 +1,23 @@
+Environment variables
+Never commit this file!
+.env
+*.env.local
+.env..local
+
+Python backend dependencies and cache
+This folder is in the root directory
+.venv
+backend/pycache/
+backend/*.pyc
+
+Frontend dependencies
+This folder can be huge and is re-created with npm install
+frontend/node_modules/
+
+Next.js build and cache folders
+frontend/.next/
+frontend/out/
+
+Operating System files
+.DS_Store
+Thumbs.db

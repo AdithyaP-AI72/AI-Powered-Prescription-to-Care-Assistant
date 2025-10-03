@@ -270,6 +270,7 @@ export default function Home() {
           </div>
         )}
 
+        {/* Active Reminders Display */}
         {reminders.length > 0 && (
           <div className="mt-8 bg-white p-6 sm:p-8 rounded-xl shadow-lg border border-gray-200">
             <h2 className="text-2xl font-semibold text-gray-800 mb-4">Active Reminders</h2>
@@ -289,12 +290,20 @@ export default function Home() {
           </div>
         )}
 
+        {/* Analysis Loading State */}
         {isLoading && (
           <div className="mt-8 text-center">
-            {/* Loading spinner */}
+            <div className="flex justify-center items-center space-x-2">
+              <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span className="text-lg font-medium text-gray-700">Extracting details from the prescription...</span>
+            </div>
           </div>
         )}
 
+        {/* Analysis Results Display */}
         {analysisResult && (
           <div className="mt-8 bg-white p-6 sm:p-8 rounded-xl shadow-lg border border-gray-200 animate-fade-in">
             <h2 className="text-2xl font-semibold text-gray-800 mb-4">Analysis Results</h2>
@@ -342,7 +351,50 @@ export default function Home() {
                   Get AI Summary & Tips
                 </button>
               )}
-              {/* Summary Loading/Error/Result display */}
+              {isSummaryLoading && (
+                <div className="text-center">
+                  <div className="flex justify-center items-center space-x-2">
+                    <svg className="animate-spin h-6 w-6 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span className="text-md font-medium text-gray-700">Generating summary and tips...</span>
+                  </div>
+                </div>
+              )}
+
+              {summaryError && (
+                <div className="mt-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg text-center">
+                  <strong>Summary Error:</strong> {summaryError}
+                </div>
+              )}
+
+              {summaryResult && (
+                <div className="animate-fade-in space-y-6">
+                  <div>
+                    <h3 className="text-xl font-semibold text-gray-800">AI-Powered Summary</h3>
+                    <p className="mt-2 p-4 bg-green-50 border-l-4 border-green-500 text-gray-700 rounded-r-lg">
+                      {summaryResult.summary}
+                    </p>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold text-gray-800">Health Tips</h3>
+                    <ul className="mt-2 list-disc list-inside space-y-1 text-gray-700">
+                      {summaryResult.health_tips.map((tip, index) => (
+                        <li key={index}>{tip}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-semibold text-gray-800">Food Interactions</h3>
+                    <ul className="mt-2 list-disc list-inside space-y-1 text-gray-700">
+                      {summaryResult.food_interactions.map((interaction, index) => (
+                        <li key={index}>{interaction}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

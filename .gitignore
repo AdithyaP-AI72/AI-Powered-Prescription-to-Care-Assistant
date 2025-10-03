@@ -1,23 +1,54 @@
-Environment variables
-Never commit this file!
+# ===============================================
+# 1. AUTHENTICATION SECRETS AND ENVIRONMENT FILES
+# CRITICAL: DO NOT COMMIT THESE!
+# ===============================================
 .env
-*.env.local
-.env..local
+.env.local
+.env.*.local
+*.env
+# Google Calendar API Specific Tokens/Keys
+token.json
+credentials.json
+service_key.json
 
-Python backend dependencies and cache
-This folder is in the root directory
-.venv
-backend/pycache/
-backend/*.pyc
 
-Frontend dependencies
-This folder can be huge and is re-created with npm install
-frontend/node_modules/
+# ===============================================
+# 2. PYTHON BACKEND DEPENDENCIES AND CACHE
+# ===============================================
+# Virtual Environment Folder (Often created in the root or /backend)
+.venv/
+env/
+venv/
 
-Next.js build and cache folders
-frontend/.next/
-frontend/out/
+# Bytecode files and Cache Folders
+__pycache__/
+*.pyc
 
-Operating System files
-.DS_Store
-Thumbs.db
+# Tesseract logs (if any are accidentally generated)
+tesseract.log
+
+
+# ===============================================
+# 3. JAVASCRIPT/NEXT.JS FRONTEND
+# ===============================================
+# Dependency Cache (The main folder for npm packages)
+/frontend/node_modules
+
+# Next.js Build Output and Cache
+/frontend/.next/
+/frontend/out/
+
+# Dependency Lock Files (Optional, but often included for consistency)
+# Uncomment the line below if you decide to keep package-lock.json out
+# /frontend/package-lock.json
+
+# Log files
+/frontend/npm-debug.log
+
+
+# ===============================================
+# 4. OPERATING SYSTEM AND IDE FILES
+# ===============================================
+.DS_Store # macOS
+Thumbs.db # Windows
+*~        # General temporary files

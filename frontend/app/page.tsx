@@ -22,9 +22,10 @@ interface SummaryResult {
 }
 
 interface Reminder {
-  id: string;
+  id: string; // This will now store the Google Calendar Event ID
   medicineName: string;
   time: string; // Stored in "HH:MM" format
+  calendarLink: string; // New: Link to the event in Google Calendar
 }
 
 
@@ -38,58 +39,12 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
-  // --- New State for Reminders ---
+  // --- State for Reminders (Now tracks Google Calendar events) ---
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null);
   const [reminderTime, setReminderTime] = useState("09:00");
 
-
-  // --- Effects for Persistence and Notifications ---
-
-  // Load reminders from localStorage on initial render
-  useEffect(() => {
-    try {
-      const storedReminders = localStorage.getItem('medicationReminders');
-      if (storedReminders) {
-        setReminders(JSON.parse(storedReminders));
-      }
-    } catch (e) {
-      console.error("Failed to parse reminders from localStorage", e);
-    }
-  }, []);
-
-  // Save reminders to localStorage whenever they change
-  useEffect(() => {
-    localStorage.setItem('medicationReminders', JSON.stringify(reminders));
-  }, [reminders]);
-
-  // Effect to check for and trigger notifications
-  useEffect(() => {
-    const checkReminders = () => {
-      const now = new Date();
-      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-
-      reminders.forEach(reminder => {
-        if (reminder.time === currentTime) {
-          // Check if notification for this reminder has already been shown this minute
-          const lastShownKey = `notif_last_shown_${reminder.id}`;
-          const lastShownTime = sessionStorage.getItem(lastShownKey);
-          if (lastShownTime !== currentTime) {
-            new Notification('Medication Reminder', {
-              body: `It's time to take your ${reminder.medicineName}.`,
-              icon: '/favicon.ico'
-            });
-            sessionStorage.setItem(lastShownKey, currentTime);
-          }
-        }
-      });
-    };
-
-    const intervalId = setInterval(checkReminders, 30000); // Check every 30 seconds
-
-    return () => clearInterval(intervalId); // Cleanup on unmount
-  }, [reminders]);
 
   // --- Event Handlers ---
 
@@ -185,7 +140,7 @@ export default function Home() {
     }
   };
 
-  // --- Reminder-Specific Handlers ---
+  // --- NEW: Sends data to FastAPI to create Google Calendar event ---
 
   const openReminderModal = (medication: Medication) => {
     setSelectedMedication(medication);
@@ -195,32 +150,59 @@ export default function Home() {
   const handleSetReminder = async () => {
     if (!selectedMedication || !reminderTime) return;
 
-    if (Notification.permission === 'denied') {
-      alert('You have blocked notifications. Please enable them in your browser settings to receive reminders.');
-      return;
-    }
-
-    if (Notification.permission === 'default') {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        alert('You need to allow notifications to set reminders.');
-        return;
-      }
-    }
-
-    const newReminder: Reminder = {
-      id: `${selectedMedication.name}-${reminderTime}-${Date.now()}`,
-      medicineName: selectedMedication.name,
-      time: reminderTime,
+    // Data to send to FastAPI /set-reminder endpoint
+    const reminderData = {
+      name: selectedMedication.name,
+      instruction: selectedMedication.instruction,
+      time: reminderTime, // HH:MM string
     };
+    
+    // Clear local error before trying
+    setSummaryError(null);
 
-    setReminders(prev => [...prev, newReminder]);
-    setIsModalOpen(false);
-    setSelectedMedication(null);
+    try {
+      const response = await fetch("http://localhost:8000/set-reminder", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(reminderData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to create Google Calendar reminder.");
+      }
+
+      const result = await response.json();
+      
+      // Update local state with the Google Calendar Event ID and Link
+      const newReminder: Reminder = {
+        id: result.event_id, 
+        medicineName: selectedMedication.name,
+        time: reminderTime,
+        calendarLink: result.calendar_link,
+      };
+
+      setReminders(prev => [...prev, newReminder]);
+      
+      // Provide positive feedback
+      alert(`Reminder set! Event ID: ${result.event_id}. You can view it in your Google Calendar.`);
+      
+      setIsModalOpen(false);
+      setSelectedMedication(null);
+      
+    } catch (err: any) {
+      setSummaryError(`Error setting Google Calendar reminder: ${err.message}`);
+      alert(`Error setting Google Calendar reminder: ${err.message}`);
+    }
   };
 
+  // NOTE: A function to delete from Google Calendar is complex and not included here.
+  // This local delete only removes it from the displayed list.
   const handleDeleteReminder = (reminderId: string) => {
     setReminders(prev => prev.filter(r => r.id !== reminderId));
+    alert("Reminder removed from local list. You must manually delete the recurring event from Google Calendar.");
   };
 
 
@@ -273,20 +255,24 @@ export default function Home() {
         {/* Active Reminders Display */}
         {reminders.length > 0 && (
           <div className="mt-8 bg-white p-6 sm:p-8 rounded-xl shadow-lg border border-gray-200">
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4">Active Reminders</h2>
+            <h2 className="text-2xl font-semibold text-gray-800 mb-4">Active Google Calendar Reminders</h2>
             <ul className="space-y-3">
               {reminders.map(reminder => (
                 <li key={reminder.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                   <div className="flex items-center space-x-3">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                     <p className="text-gray-800">
                       Take <strong>{reminder.medicineName}</strong> at <strong>{reminder.time}</strong>
+                      <a href={reminder.calendarLink} target="_blank" rel="noopener noreferrer" className="ml-3 text-blue-500 hover:text-blue-700 text-sm font-medium">(View in Calendar)</a>
                     </p>
                   </div>
-                  <button onClick={() => handleDeleteReminder(reminder.id)} className="text-red-500 hover:text-red-700 font-semibold">Delete</button>
+                  <button onClick={() => handleDeleteReminder(reminder.id)} className="text-red-500 hover:text-red-700 font-semibold">Remove Locally</button>
                 </li>
               ))}
             </ul>
+            <p className="mt-4 text-sm text-gray-600 border-t pt-2">
+              Note: Clicking "Remove Locally" only removes the reminder from this list; you must delete the recurring event from your Google Calendar manually.
+            </p>
           </div>
         )}
 
@@ -325,7 +311,7 @@ export default function Home() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{med.instruction}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                         <button onClick={() => openReminderModal(med)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">
-                          Set
+                          Set Google Reminder
                         </button>
                       </td>
                     </tr>
@@ -405,7 +391,9 @@ export default function Home() {
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
           <div className="bg-white p-8 rounded-lg shadow-xl max-w-sm w-full">
             <h3 className="text-xl font-semibold mb-4">Set Reminder for {selectedMedication.name}</h3>
-            <p className="text-gray-600 mb-4">Select the time you want to be reminded daily.</p>
+            <p className="text-gray-600 mb-4">
+              A **DAILY** recurring event will be created in your Google Calendar at the selected time.
+            </p>
             <input
               type="time"
               value={reminderTime}
@@ -414,7 +402,7 @@ export default function Home() {
             />
             <div className="flex justify-end space-x-4">
               <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300">Cancel</button>
-              <button onClick={handleSetReminder} className="px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Save Reminder</button>
+              <button onClick={handleSetReminder} className="px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Create Google Calendar Event</button>
             </div>
           </div>
         </div>
@@ -422,4 +410,3 @@ export default function Home() {
     </main>
   );
 }
-

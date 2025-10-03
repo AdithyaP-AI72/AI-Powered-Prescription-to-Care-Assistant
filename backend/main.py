@@ -10,13 +10,27 @@ import io
 from pydantic import BaseModel
 from typing import List
 
+# --- Google Calendar API Imports ---
+import os.path
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from datetime import datetime, timedelta
+import pytz 
+# -----------------------------------
+
+
 # --- Setup ---
 load_dotenv()
-# Make sure to update this path if your Tesseract installation is different
-# For Windows:
+# Tesseract path configuration
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-# For Linux/macOS, you might not need this line if tesseract is in your PATH
 api_key = os.getenv("GOOGLE_API_KEY")
+
+# --- Google Calendar Configuration ---
+# IMPORTANT: Change this to the specific timezone of your application/user
+TIMEZONE = "Asia/Kolkata" 
+CALENDAR_ID = 'primary'
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 # --- LangChain Model Initialization ---
 llm = ChatGoogleGenerativeAI(
@@ -41,15 +55,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Authentication and Service Initialization ---
+
+def get_calendar_service():
+    """Authenticates with Google and returns the calendar service object."""
+    creds = None
+    
+    # 1. Load credentials from existing token.json file
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    
+    # 2. If token is invalid or expired, refresh it
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            # Save the refreshed token
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
+        else:
+            # Token.json is missing or permanently invalid. User needs to run calendar_auth.py
+            raise HTTPException(status_code=503, detail="Google Calendar is not authenticated. Run calendar_auth.py first.")
+    
+    # 3. Build and return the service object
+    return build('calendar', 'v3', credentials=creds)
+
+# Initialize the service globally when the app starts
+try:
+    CALENDAR_SERVICE = get_calendar_service()
+except HTTPException as e:
+    # If authentication fails, the service remains None
+    print(f"Initialization Warning: {e.detail}")
+    CALENDAR_SERVICE = None 
+
 # --- Pydantic Models for Request Bodies ---
 class MedicationList(BaseModel):
     medications: List[str]
+    
+class ReminderRequest(BaseModel):
+    """Model for data coming from the frontend reminder modal."""
+    name: str
+    instruction: str 
+    time: str      # HH:MM string (e.g., "09:00")
 
 
-# --- Core Analysis Logic ---
+# --- Core Analysis Logic (Unchanged) ---
 def analyze_prescription_image(image_bytes: bytes):
     """
     This function takes the image bytes, performs OCR, and gets the analysis from the LLM.
+    (Contains existing logic for OCR, prompt templating, and JSON parsing)
     """
     try:
         image = Image.open(io.BytesIO(image_bytes))
@@ -98,7 +151,9 @@ def analyze_prescription_image(image_bytes: bytes):
         print(f"An unexpected error occurred: {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
 
+
 # --- API Endpoints ---
+
 @app.post("/analyze")
 async def analyze_endpoint(file: UploadFile = File(...)):
     """
@@ -112,9 +167,10 @@ async def analyze_endpoint(file: UploadFile = File(...)):
 @app.post("/summarize")
 async def summarize_endpoint(medication_list: MedicationList):
     """
-    The new endpoint that receives a list of medicine names and returns
+    The endpoint that receives a list of medicine names and returns
     a summary, health tips, and food interactions.
     """
+    # (Contains existing LLM summarization logic)
     medications = medication_list.medications
     if not medications:
         raise HTTPException(status_code=400, detail="No medication names provided.")
@@ -154,3 +210,67 @@ async def summarize_endpoint(medication_list: MedicationList):
     except Exception as e:
         print(f"An unexpected error occurred during summarization: {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
+
+
+@app.post("/set-reminder")
+async def set_reminder_endpoint(reminder_data: ReminderRequest):
+    """
+    Endpoint to create a recurring Google Calendar event for medication.
+    """
+    global CALENDAR_SERVICE
+    
+    # Check if the service is authenticated and ready
+    if not CALENDAR_SERVICE:
+        raise HTTPException(status_code=503, detail="Google Calendar service is unavailable. Please run calendar_auth.py to authenticate.")
+
+    # 1. Determine the Start Datetime (Today's date + selected time)
+    try:
+        local_tz = pytz.timezone(TIMEZONE)
+    except pytz.exceptions.UnknownTimeZoneError:
+        raise HTTPException(status_code=500, detail="Invalid timezone configured in the backend.")
+        
+    today = datetime.now(local_tz).date()
+    
+    # Combine today's date with the HH:MM time from the frontend
+    hour, minute = map(int, reminder_data.time.split(':'))
+    start_datetime = local_tz.localize(datetime(today.year, today.month, today.day, hour, minute))
+    end_datetime = start_datetime + timedelta(minutes=30) # Event lasts 30 minutes
+
+    # 2. Construct the Google Calendar Event Body
+    event = {
+        'summary': f"Medication Reminder: Take {reminder_data.name}",
+        'description': f"Dosage/Instruction: {reminder_data.instruction}",
+        'start': {
+            'dateTime': start_datetime.isoformat(),
+            'timeZone': TIMEZONE,
+        },
+        'end': {
+            'dateTime': end_datetime.isoformat(),
+            'timeZone': TIMEZONE,
+        },
+        'reminders': {
+            'useDefault': False,
+            'overrides': [{'method': 'popup', 'minutes': 10}],
+        },
+        # Set a recurrence rule for DAILY reminder
+        'recurrence': [
+            'RRULE:FREQ=DAILY;INTERVAL=1'
+        ]
+    }
+
+    # 3. Call the Google Calendar API
+    try:
+        inserted_event = CALENDAR_SERVICE.events().insert(
+            calendarId=CALENDAR_ID, 
+            body=event
+        ).execute()
+        
+        return {
+            "status": "success",
+            "message": "Reminder created successfully on Google Calendar.",
+            "event_id": inserted_event.get('id'),
+            "calendar_link": inserted_event.get('htmlLink')
+        }
+    except Exception as e:
+        print(f"Google Calendar API Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create event in Google Calendar: {str(e)}")

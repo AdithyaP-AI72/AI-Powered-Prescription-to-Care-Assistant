@@ -3,8 +3,6 @@
 # CRITICAL: DO NOT COMMIT THESE!
 # ===============================================
 .env
-.env.local
-.env.*.local
 *.env
 # Google Calendar API Specific Tokens/Keys
 token.json

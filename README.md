@@ -1,145 +1,112 @@
-# **🩺 AI Prescription-to-Care Assistant** 
+Prescription to Personal Care Assistant
+This is an AI-powered web application that analyzes medical prescriptions, provides health insights, sets medication reminders, finds nearby pharmacies, and offers a conversational AI assistant for health-related questions.
 
-AI-powered healthcare companion that turns a doctor’s prescription into a personalized care plan.
-AI-Agent Powered Prescription-to-Care Assistant
-This project is a full-stack web application designed to help users digitize and understand their medical prescriptions. It uses Optical Character Recognition (OCR) to read an uploaded prescription image and a powerful Large Language Model (LLM) to extract, correct, and structure the information.
+Features
+Prescription Analysis: Upload an image of a prescription to extract medication details using OCR and a Gemini-powered language model.
 
-Project Architecture
-The application is built with a modern decoupled architecture:
+AI Summaries: Get easy-to-understand summaries, health tips, and food interaction warnings for your medications.
 
-Frontend: A user-friendly interface built with Next.js and React, allowing users to upload a prescription image and view the results.
+Google Calendar Integration: Set daily medication reminders directly in your Google Calendar.
 
-Backend: A powerful API server built with FastAPI (Python) that handles the core logic, including OCR processing and AI analysis.
+Nearby Pharmacies: Find the top 5 closest pharmacies using your current location, displayed on an interactive map.
 
-Prerequisites
-Before you begin, ensure you have the following installed on your system:
+AI Assistant: A conversational agent to answer questions about your prescription (e.g., "What should I do if I miss a dose?").
 
-Tesseract-OCR Engine: This is required for the OCR functionality.
+Multi-Language Support: The interface and analysis results can be translated into Hindi, Kannada, and Tamil.
 
-Download and install it from the official Tesseract documentation.
+Voice Input: Use your voice to interact with the AI Assistant.
 
-Important: During installation on Windows, make sure to note the installation path. The default is typically C:\Program Files\Tesseract-OCR. You may need to update this path in backend/main.py if yours is different.
+Tech Stack
+Frontend
+Framework: Next.js / React
 
-Python: (Version 3.8 or higher recommended).
+Language: TypeScript
 
-Download from python.org.
+Styling: Tailwind CSS
 
-Node.js: (LTS version recommended).
+Maps: Google Maps JavaScript API via @react-google-maps/api
 
-Download from nodejs.org. This includes npm, the Node package manager.
+Voice Input: Web Speech API (Browser native)
+
+Backend
+Framework: FastAPI
+
+Language: Python
+
+AI Integration: LangChain with langchain-google-genai
+
+OCR: Tesseract-OCR via pytesseract
+
+Data Validation: Pydantic
+
+External Services & APIs
+AI Model: Google Gemini
+
+Calendar: Google Calendar API
+
+Maps & Geolocation: Google Maps API, Google Places API
+
+System Prerequisites
+Before you begin, you need to have the following installed on your system. These are dependencies that exist outside the Python virtual environment.
+
+Python (3.9+): Download Python
+
+Node.js (18.x or newer): Download Node.js
+
+Tesseract-OCR: This is required for the Optical Character Recognition (OCR) to work.
+
+Windows: Download and run the installer from Tesseract at UB Mannheim. Important: During installation, make sure to check the box to add Tesseract to your system's PATH.
+
+macOS (using Homebrew): brew install tesseract
+
+Linux (Debian/Ubuntu): sudo apt-get install tesseract-ocr
 
 Setup Instructions
-Follow these steps to get the application running locally.
+1. API Keys & Security Notice
+IMPORTANT: For the purpose of this hackathon, the necessary API keys have been pre-configured in the .env (backend) and .env.local (frontend) files.
 
-1. Backend Setup (FastAPI Server)
-The backend is responsible for all the heavy lifting.
+2. Backend Setup
+Navigate to your backend directory from the terminal.
 
-Navigate to the Backend Directory:
+cd path/to/your/backend
 
-cd backend
+a. Create a Virtual Environment:
 
-Create and Activate a Python Virtual Environment:
+python -m venv venv
 
-This isolates the project's Python dependencies.
+b. Activate the Virtual Environment:
 
-# Create the virtual environment
-python -m venv .venv
+Windows: venv\Scripts\activate
 
-# Activate it (Windows PowerShell)
-.\.venv\Scripts\Activate.ps1
+macOS/Linux: source venv/bin/activate
 
-# Or for Windows Command Prompt
-# .\.venv\Scripts\activate
-
-Your terminal prompt should now be prefixed with (.venv).
-
-Install Python Dependencies:
-
-All required packages are listed in requirements.txt.
+c. Install Python Dependencies:
 
 pip install -r requirements.txt
 
-Configure Environment Variables:
+d. Google Calendar Authentication:
 
-The backend needs your Google API key to work.
+Run the calendar_auth.py script once to authorize access to your Google Calendar. This will create a token.json file.
 
-In the backend folder, create a file named .env.
+python calendar_auth.py
 
-Add your API key to this file like so:
-
-GOOGLE_API_KEY="YOUR_SECRET_API_KEY_HERE"
-
-2. Frontend Setup (Next.js App)
-The frontend is what you see and interact with in the browser.
-
-Navigate to the Frontend Directory:
-
-From the project's root folder, run:
-
-cd frontend
-
-Install Node.js Dependencies:
-
-This will download all the necessary packages for the React app, like Tailwind CSS.
-
-npm install
-
-Running the Application
-To run the full-stack application, you must have two separate terminals open and running simultaneously.
-
-Terminal 1: Start the Backend Server
-Make sure you are in the backend directory.
-
-Make sure your Python virtual environment is activated ((.venv) is visible).
-
-Run the Uvicorn server:
+e. Run the Backend Server:
 
 uvicorn main:app --reload
 
-The server will start and be available at http://localhost:8000. Leave this terminal running.
+The backend will now be running at http://localhost:8000.
 
-Terminal 2: Start the Frontend App
-Make sure you are in the frontend directory.
+3. Frontend Setup
+Open a new terminal and navigate to your frontend directory.
 
-Run the Next.js development server:
+cd path/to/your/frontend
+
+a. Install Node.js Dependencies:
+
+npm install
+
+b. Run the Frontend Development Server:
 
 npm run dev
 
-The frontend application will start and be available at http://localhost:3000.
-
-You can now open your web browser and navigate to http://localhost:3000 to use the Prescription-to-Care Assistant!
-
-
-Patients can simply upload their prescription (photo or PDF), and our system automatically:
-
-📄 Extracts text with OCR → medicines, dosage, doctor notes.
-
-⏰ Schedules medicine reminders → recurring events synced to Google Calendar.
-
-📅 Adds doctor appointments → directly into Google Calendar.
-
-💊 Analyzes dosage & interactions → frequency, duration, and safety tips.
-
-🛒 Finds cheapest medicine prices online → with alternatives & purchase links.
-
-🔔 Sends notifications → via email/WhatsApp/SMS for timely reminders.
-
-📊 Generates health summaries → weekly adherence + useful suggestions.
-
-
-
-🛠️ Tech Stack
-
-Frontend: React / Next.js + TailwindCSS
-
-Backend: FastAPI / Flask (Python)
-
-OCR: Tesseract / Google Vision API
-
-AI Agents: LangChain + OpenAI
-
-Calendar Integration: Google Calendar API
-
-Reminders/Notifications: Twilio / WhatsApp API
-
-Database: Firebase / SQLite
+The frontend will now be running at http://localhost:3000. The API keys are already configured in the .env.local file and should work out of the box.

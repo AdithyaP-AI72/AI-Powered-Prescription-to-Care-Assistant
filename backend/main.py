@@ -8,45 +8,56 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import io
 from pydantic import BaseModel
-from typing import List
+from typing import List, Dict, Any, Optional
 
-# --- Google Calendar API Imports ---
+# --- LangChain Message Imports ---
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
+# --- Google Calendar & Maps API Imports ---
 import os.path
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
-import pytz 
+import pytz
+import googlemaps
 # -----------------------------------
+# --- Pathlib import for robust pathing ---
+from pathlib import Path
 
 
 # --- Setup ---
-load_dotenv()
-# Tesseract path configuration
+# CORRECTED: Use pathlib to build a robust, absolute path to the .env.local file
+# This tells your backend to look inside the 'frontend' folder for the keys.
+backend_dir = Path(__file__).resolve().parent
+project_root = backend_dir.parent
+dotenv_path = project_root / "frontend" / ".env.local"
+
+if dotenv_path.exists():
+    load_dotenv(dotenv_path=dotenv_path)
+else:
+    print(f"WARNING: Environment file not found at {dotenv_path}. Make sure it exists.")
+
+
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 api_key = os.getenv("GOOGLE_API_KEY")
+maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+
+if not api_key:
+    raise ValueError("ERROR: GOOGLE_API_KEY is not set. Please check your .env.local file in the frontend directory.")
+
 
 # --- Google Calendar Configuration ---
-# IMPORTANT: Change this to the specific timezone of your application/user
-TIMEZONE = "Asia/Kolkata" 
+TIMEZONE = "Asia/Kolkata"
 CALENDAR_ID = 'primary'
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 # --- LangChain Model Initialization ---
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0,
-    google_api_key=api_key
-)
+llm = ChatGoogleGenerativeAI( model="gemini-2.5-flash", temperature=0, google_api_key=api_key )
 
 # --- FastAPI App Initialization ---
 app = FastAPI()
-
-# --- CORS Middleware ---
-origins = [
-    "http://localhost:3000",
-]
-
+origins = [ "http://localhost:3000" ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -55,122 +66,119 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Authentication and Service Initialization ---
-
+# --- Service Initializations ---
 def get_calendar_service():
-    """Authenticates with Google and returns the calendar service object."""
     creds = None
-    
-    # 1. Load credentials from existing token.json file
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    
-    # 2. If token is invalid or expired, refresh it
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            # Save the refreshed token
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+            with open('token.json', 'w') as token: token.write(creds.to_json())
         else:
-            # Token.json is missing or permanently invalid. User needs to run calendar_auth.py
-            raise HTTPException(status_code=503, detail="Google Calendar is not authenticated. Run calendar_auth.py first.")
-    
-    # 3. Build and return the service object
+            raise HTTPException(status_code=503, detail="Google Calendar is not authenticated.")
     return build('calendar', 'v3', credentials=creds)
 
-# Initialize the service globally when the app starts
 try:
     CALENDAR_SERVICE = get_calendar_service()
 except HTTPException as e:
-    # If authentication fails, the service remains None
     print(f"Initialization Warning: {e.detail}")
-    CALENDAR_SERVICE = None 
+    CALENDAR_SERVICE = None
 
-# --- Pydantic Models for Request Bodies ---
-class MedicationList(BaseModel):
-    medications: List[str]
-    
-class ReminderRequest(BaseModel):
-    """Model for data coming from the frontend reminder modal."""
-    name: str
-    instruction: str 
-    time: str      # HH:MM string (e.g., "09:00")
+# --- Pydantic Models ---
+class MedicationList(BaseModel): medications: List[str]
+class ReminderRequest(BaseModel): name: str; instruction: str; time: str
+class TranslationRequest(BaseModel): content: Dict[str, Any]; target_language: str
+class ChatRequest(BaseModel): messages: List[Dict[str, str]]; analysis_data: Optional[Dict[str, Any]] = None
+class LocationRequest(BaseModel): latitude: float; longitude: float
+class ReanalysisRequest(BaseModel): edited_text: str # New model for re-analysis
 
+# --- Analysis Prompt (Shared Logic) ---
+ANALYSIS_PROMPT_TEMPLATE = """
+You are an expert medical data analysis AI. Your task is to analyze the following OCR text from a prescription and return clean, structured data.
 
-# --- Core Analysis Logic (Unchanged) ---
-def analyze_prescription_image(image_bytes: bytes):
-    """
-    This function takes the image bytes, performs OCR, and gets the analysis from the LLM.
-    (Contains existing logic for OCR, prompt templating, and JSON parsing)
-    """
+**Primary Directive: Correct and Extract.**
+
+**Phase 1: Correction**
+- First, mentally review the entire text for common OCR errors (e.g., 'wen' should be 'when', 'tabIet' should be 'tablet').
+- Use medical and general context to correct these typos to their most logical, real-world equivalent.
+
+**Phase 2: Extraction**
+- After correction, extract the information based on the following strict rules.
+
+**CRITICAL EXTRACTION RULES:**
+1.  **For Missing Information:** If a specific detail (like an 'instruction') is clearly not present for a medicine, you MUST use the string "N/A".
+2.  **For Unreadable Text:** If a piece of text is so garbled that you cannot confidently correct it into a real-world medicine or a coherent instruction, you MUST use the string "Illegible".
+3.  **DO NOT HALLUCINATE:** Never invent a medicine name or dosage. If the OCR text for a medicine is nonsensical (e.g., 'Vixbiet'), label its name as "Illegible" and do not attempt to create a dosage for it.
+
+Format your final response as a single JSON object with two keys: "medications" and "advice".
+- The "medications" key should hold a list of JSON objects, each with three keys: "name", "dosage", and "instruction".
+- The "advice" key should hold a single string of the doctor's advice.
+
+**Example of the required JSON format:**
+{{
+  "medications": [
+    {{
+      "name": "Augmentin 625 Duo Tablet",
+      "dosage": "1 tablet for 5 Days",
+      "instruction": "Take on empty stomach"
+    }},
+    {{
+      "name": "Crocin Advance Tablet",
+      "dosage": "1 tablet when required for 5 Days",
+      "instruction": "After food"
+    }}
+  ],
+  "advice": "Review with reports"
+}}
+
+Your entire response MUST be only the JSON object. Do not include any other text or formatting like ```json.
+
+Here is the text to analyze:
+---
+{text_to_analyze}
+---
+"""
+
+# --- Core Logic ---
+def get_analysis_from_text(text: str):
+    prompt = ANALYSIS_PROMPT_TEMPLATE.format(text_to_analyze=text)
+    cleaned_response = "" # Initialize to ensure it's available in the except block
     try:
-        image = Image.open(io.BytesIO(image_bytes))
-        extracted_text = pytesseract.image_to_string(image)
-
-        if not extracted_text.strip():
-            raise HTTPException(status_code=400, detail="OCR failed: No text could be extracted from the image.")
-
-        prompt_template = f"""
-        You are an expert medical data analysis AI. Your task is to analyze the following OCR text from a prescription and return clean, structured data.
-
-        **Primary Directive: Correct and Extract.**
-
-        **Phase 1: Correction**
-        - First, mentally review the entire text for common OCR errors (e.g., 'wen' should be 'when', 'tabIet' should be 'tablet').
-        - Use medical and general context to correct these typos to their most logical, real-world equivalent.
-
-        **Phase 2: Extraction**
-        - After correction, extract the information based on the following strict rules.
-
-        **CRITICAL EXTRACTION RULES:**
-        1.  **For Missing Information:** If a specific detail (like an 'instruction') is clearly not present for a medicine, you MUST use the string "N/A".
-        2.  **For Unreadable Text:** If a piece of text is so garbled that you cannot confidently correct it into a real-world medicine or a coherent instruction, you MUST use the string "Illegible".
-        3.  **DO NOT HALLUCINATE:** Never invent a medicine name or dosage. If the OCR text for a medicine is nonsensical (e.g., 'Vixbiet'), label its name as "Illegible" and do not attempt to create a dosage for it.
-
-        Format your final response as a single JSON object with two keys: "medications" and "advice".
-        - The "medications" key should hold a list of JSON objects, each with three keys: "name", "dosage", and "instruction".
-        - The "advice" key should hold a single string of the doctor's advice.
-
-        Here is the OCR text:
-        ---
-        {extracted_text}
-        ---
-        """
-
-        response = llm.invoke(prompt_template)
-        
+        response = llm.invoke(prompt)
         cleaned_response = response.content.strip().replace("```json", "").replace("```", "")
-        
+        if not cleaned_response: raise ValueError("LLM returned empty analysis.")
         return json.loads(cleaned_response)
-
-    except (json.JSONDecodeError, KeyError) as e:
-        print(f"Error parsing LLM response: {e}")
-        raise HTTPException(status_code=500, detail="Could not parse the analysis from the AI model.")
+    except json.JSONDecodeError as e:
+        print(f"--- JSON DECODE ERROR ---")
+        print(f"Error: {e}")
+        print(f"AI response that failed to parse:\n{cleaned_response}")
+        print(f"-------------------------")
+        raise HTTPException(status_code=500, detail="Could not get a valid analysis from the AI model (JSON format error).")
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
-
+        print(f"Error during AI analysis: {e}")
+        raise HTTPException(status_code=500, detail="Could not get a valid analysis from the AI model.")
 
 # --- API Endpoints ---
-
 @app.post("/analyze")
 async def analyze_endpoint(file: UploadFile = File(...)):
-    """
-    The endpoint that receives the uploaded prescription image,
-    processes it, and returns the analysis.
-    """
     contents = await file.read()
-    analysis_result = analyze_prescription_image(contents)
-    return analysis_result
+    try:
+        image = Image.open(io.BytesIO(contents))
+        extracted_text = pytesseract.image_to_string(image)
+        if not extracted_text.strip():
+            raise HTTPException(status_code=400, detail="OCR failed: No text could be extracted.")
+        return get_analysis_from_text(extracted_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
+
+# New endpoint for re-analyzing edited text
+@app.post("/re-analyze")
+async def reanalyze_endpoint(request: ReanalysisRequest):
+    return get_analysis_from_text(request.edited_text)
 
 @app.post("/summarize")
 async def summarize_endpoint(medication_list: MedicationList):
-    """
-    The endpoint that receives a list of medicine names and returns
-    a summary, health tips, and food interactions.
-    """
-    # (Contains existing LLM summarization logic)
     medications = medication_list.medications
     if not medications:
         raise HTTPException(status_code=400, detail="No medication names provided.")
@@ -192,89 +200,135 @@ async def summarize_endpoint(medication_list: MedicationList):
     - "summary" should contain the paragraph as a single string.
     - "health_tips" should be a list of strings.
     - "food_interactions" should be a list of strings.
-
-    Example Response Structure:
-    {{
-        "summary": "This combination of medications is prescribed to treat...",
-        "health_tips": ["Stay well-hydrated by drinking plenty of water throughout the day.", "Take the medication with food to reduce potential stomach upset."],
-        "food_interactions": ["Avoid consuming grapefruit or grapefruit juice as it can interfere with the absorption of some of these medications.", "Limit high-fat meals around the time of your dose."]
-    }}
     """
     try:
         response = llm.invoke(prompt_template)
         cleaned_response = response.content.strip().replace("```json", "").replace("```", "")
         return json.loads(cleaned_response)
     except (json.JSONDecodeError, KeyError) as e:
-        print(f"Error parsing LLM summary response: {e}")
         raise HTTPException(status_code=500, detail="Could not parse the summary from the AI model.")
-    except Exception as e:
-        print(f"An unexpected error occurred during summarization: {e}")
-        raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
 
 
 @app.post("/set-reminder")
 async def set_reminder_endpoint(reminder_data: ReminderRequest):
-    """
-    Endpoint to create a recurring Google Calendar event for medication.
-    """
     global CALENDAR_SERVICE
-    
-    # Check if the service is authenticated and ready
     if not CALENDAR_SERVICE:
         try:
-            # Attempt to reinitialize if token.json exists
             CALENDAR_SERVICE = get_calendar_service()
         except HTTPException:
             raise HTTPException(status_code=503, detail="Google Calendar service is unavailable. Please run calendar_auth.py to authenticate.")
 
-    # 1. Determine the Start Datetime (Today's date + selected time)
     try:
         local_tz = pytz.timezone(TIMEZONE)
-    except pytz.exceptions.UnknownTimeZoneError:
-        raise HTTPException(status_code=500, detail="Invalid timezone configured in the backend.")
-        
-    today = datetime.now(local_tz).date()
-    
-    # Combine today's date with the HH:MM time from the frontend
-    hour, minute = map(int, reminder_data.time.split(':'))
-    start_datetime = local_tz.localize(datetime(today.year, today.month, today.day, hour, minute))
-    end_datetime = start_datetime + timedelta(minutes=30) # Event lasts 30 minutes
-
-    # 2. Construct the Google Calendar Event Body
-    event = {
-        'summary': f"Medication Reminder: Take {reminder_data.name}",
-        'description': f"Dosage/Instruction: {reminder_data.instruction}",
-        'start': {
-            'dateTime': start_datetime.isoformat(),
-            'timeZone': TIMEZONE,
-        },
-        'end': {
-            'dateTime': end_datetime.isoformat(),
-            'timeZone': TIMEZONE,
-        },
-        'reminders': {
-            'useDefault': False,
-            'overrides': [{'method': 'popup', 'minutes': 10}],
-        },
-        # Set a recurrence rule for DAILY reminder
-        'recurrence': [
-            'RRULE:FREQ=DAILY;INTERVAL=1'
-        ]
-    }
-
-    # 3. Call the Google Calendar API
-    try:
-        inserted_event = CALENDAR_SERVICE.events().insert(
-            calendarId=CALENDAR_ID, 
-            body=event
-        ).execute()
-        
-        return {
-            "status": "success",
-            "message": "Reminder created successfully on Google Calendar.",
-            "event_id": inserted_event.get('id'),
-            "calendar_link": inserted_event.get('htmlLink')
-        }
+        today = datetime.now(local_tz).date()
+        hour, minute = map(int, reminder_data.time.split(':'))
+        start_datetime = local_tz.localize(datetime(today.year, today.month, today.day, hour, minute))
+        end_datetime = start_datetime + timedelta(minutes=30)
+        event = { 'summary': f"Medication Reminder: Take {reminder_data.name}", 'description': f"Dosage/Instruction: {reminder_data.instruction}", 'start': {'dateTime': start_datetime.isoformat(), 'timeZone': TIMEZONE}, 'end': {'dateTime': end_datetime.isoformat(), 'timeZone': TIMEZONE}, 'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 10}]}, 'recurrence': ['RRULE:FREQ=DAILY;INTERVAL=1']}
+        inserted_event = CALENDAR_SERVICE.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        return { "status": "success", "message": "Reminder created successfully on Google Calendar.", "event_id": inserted_event.get('id'), "calendar_link": inserted_event.get('htmlLink')}
     except Exception as e:
-        print(f"Google Calendar API Error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create event in Google Calendar: {str(e)}")
+
+@app.post("/translate")
+async def translate_endpoint(request: TranslationRequest):
+    if not request.content:
+        raise HTTPException(status_code=400, detail="No content provided for translation.")
+
+    try:
+        content_json_str = json.dumps(request.content, indent=2, ensure_ascii=False)
+        prompt_template = f"""
+        You are a highly skilled translation AI. Your task is to translate the user-provided JSON content into {request.target_language}.
+
+        **CRITICAL INSTRUCTIONS:**
+        1.  **Translate ONLY the string values.** Do not translate the JSON keys (e.g., "name", "dosage", "summary").
+        2.  **Preserve the original JSON structure EXACTLY.** The output must be a valid JSON object with the same keys and nesting.
+        3.  **Keep special medical terms as is:** Do not translate specific medical terms or strings like "N/A" or "Illegible".
+        4.  **Handle numbers:** Numbers should not be translated or changed.
+        5.  **Language Script:** Use the native script for the target language (e.g., Devanagari for Hindi).
+        6.  **Your final output must ONLY be the translated JSON object, and nothing else.** Do not wrap it in ```json``` or add any conversational text.
+
+        **TARGET LANGUAGE:** {request.target_language}
+
+        **JSON TO TRANSLATE:**
+        ---
+        {content_json_str}
+        ---
+        """
+        response = llm.invoke(prompt_template)
+        cleaned_response = response.content.strip().replace("```json", "").replace("```", "")
+        if not cleaned_response: raise ValueError("LLM returned an empty response for translation.")
+        return json.loads(cleaned_response)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An internal server error occurred during translation: {str(e)}")
+
+@app.post("/chat")
+async def chat_endpoint(request: ChatRequest):
+    context_str = "No prescription data available."
+    if request.analysis_data:
+        context_str = f"The user's current prescription analysis is:\n{json.dumps(request.analysis_data, indent=2)}"
+
+    system_prompt = f"""
+    You are an AI Healthcare Planning Agent. Your primary role is to assist users with questions about their medication schedule and general health inquiries based on their prescription.
+
+    **Your Core Traits:**
+    - **Proactive:** You anticipate user needs.
+    - **Reasoning:** You understand interactions, risks, and schedules based on the provided context.
+    - **Personalized:** Your advice is tailored to the user's specific prescription data.
+    - **Autonomous:** You can provide clear next steps and suggestions without needing manual intervention for simple queries.
+    - **Explainable:** You provide the reasoning for your advice.
+
+    **IMPORTANT SAFETY RULE:** You are an AI assistant, NOT a doctor. You MUST ALWAYS include a disclaimer to consult a healthcare professional for any medical decisions. Never give definitive medical advice. You can provide information and suggestions based ONLY on the data provided.
+
+    **User's Prescription Context:**
+    {context_str}
+
+    Now, please continue the conversation with the user.
+    """
+    langchain_messages = [SystemMessage(content=system_prompt)]
+    for msg in request.messages[1:]:
+        if msg["role"] == 'user': langchain_messages.append(HumanMessage(content=msg["text"]))
+        elif msg["role"] == 'ai': langchain_messages.append(AIMessage(content=msg["text"]))
+    try:
+        response = llm.invoke(langchain_messages)
+        return {"response": response.content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred in the AI chat agent: {str(e)}")
+
+@app.post("/find-pharmacies")
+async def find_pharmacies_endpoint(location: LocationRequest):
+    if not maps_api_key:
+        raise HTTPException(status_code=503, detail="Google Maps API key is not configured on the server.")
+    
+    gmaps = googlemaps.Client(key=maps_api_key)
+    
+    try:
+        places_result = gmaps.places_nearby(
+            location=(location.latitude, location.longitude),
+            keyword='pharmacy',
+            rank_by='distance'
+        )
+        results = []
+        for place in places_result.get('results', [])[:5]:
+            place_id = place.get('place_id')
+            # **FIX IS HERE:** The `geometry` is reliably in the first result, so we grab it here.
+            place_geometry = place.get('geometry') 
+            
+            if not place_id or not place_geometry: 
+                continue
+
+            # We only need to make a second call for the phone number, which isn't in the nearby search result.
+            details = gmaps.place(place_id=place_id, fields=['formatted_phone_number'])
+            place_details = details.get('result', {})
+            
+            # Now we combine the data from both calls.
+            results.append({
+                'name': place.get('name'),
+                'address': place.get('vicinity'),
+                'phone': place_details.get('formatted_phone_number', 'N/A'),
+                'geometry': place_geometry # Ensure geometry is included in the final object
+            })
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred while searching for pharmacies: {str(e)}")
+

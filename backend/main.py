@@ -221,7 +221,11 @@ async def set_reminder_endpoint(reminder_data: ReminderRequest):
     
     # Check if the service is authenticated and ready
     if not CALENDAR_SERVICE:
-        raise HTTPException(status_code=503, detail="Google Calendar service is unavailable. Please run calendar_auth.py to authenticate.")
+        try:
+            # Attempt to reinitialize if token.json exists
+            CALENDAR_SERVICE = get_calendar_service()
+        except HTTPException:
+            raise HTTPException(status_code=503, detail="Google Calendar service is unavailable. Please run calendar_auth.py to authenticate.")
 
     # 1. Determine the Start Datetime (Today's date + selected time)
     try:

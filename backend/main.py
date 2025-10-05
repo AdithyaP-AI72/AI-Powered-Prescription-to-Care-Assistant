@@ -87,13 +87,13 @@ except HTTPException as e:
 
 # --- Pydantic Models ---
 class MedicationList(BaseModel): medications: List[str]
-class ReminderRequest(BaseModel): name: str; instruction: str; time: str
+class ReminderRequest(BaseModel): name: str; instruction: str; time: str; days_duration: int
 class TranslationRequest(BaseModel): content: Dict[str, Any]; target_language: str
 class ChatRequest(BaseModel): messages: List[Dict[str, str]]; analysis_data: Optional[Dict[str, Any]] = None
 class LocationRequest(BaseModel): latitude: float; longitude: float
 class ReanalysisRequest(BaseModel): edited_text: str # New model for re-analysis
 
-# --- Analysis Prompt (Shared Logic) ---
+# --- Analysis Prompt ---
 ANALYSIS_PROMPT_TEMPLATE = """
 You are an expert medical data analysis AI. Your task is to analyze the following OCR text from a prescription and return clean, structured data.
 
@@ -110,9 +110,10 @@ You are an expert medical data analysis AI. Your task is to analyze the followin
 1.  **For Missing Information:** If a specific detail (like an 'instruction') is clearly not present for a medicine, you MUST use the string "N/A".
 2.  **For Unreadable Text:** If a piece of text is so garbled that you cannot confidently correct it into a real-world medicine or a coherent instruction, you MUST use the string "Illegible".
 3.  **DO NOT HALLUCINATE:** Never invent a medicine name or dosage. If the OCR text for a medicine is nonsensical (e.g., 'Vixbiet'), label its name as "Illegible" and do not attempt to create a dosage for it.
-
+4.  **Duration (Days):** Find the total number of days the medication is prescribed for. Look for explicit terms like "for 7 days," "x 14 days," or "till 30 days" in the text associated with the medicine. If found, provide the number as an **INTEGER**. If not found or illegible, use the INTEGER **1** (assuming a minimum duration).
+    
 Format your final response as a single JSON object with two keys: "medications" and "advice".
-- The "medications" key should hold a list of JSON objects, each with three keys: "name", "dosage", and "instruction".
+- The "medications" key should hold a list of JSON objects, each with **FOUR** keys: "name", "dosage", "instruction", AND **"duration_days"** (as an integer).
 - The "advice" key should hold a single string of the doctor's advice.
 
 **Example of the required JSON format:**
@@ -120,16 +121,18 @@ Format your final response as a single JSON object with two keys: "medications" 
   "medications": [
     {{
       "name": "Augmentin 625 Duo Tablet",
-      "dosage": "1 tablet for 5 Days",
-      "instruction": "Take on empty stomach"
+      "dosage": "1 tablet",
+      "instruction": "Take on empty stomach, twice daily for 5 days",
+      "duration_days": 5
     }},
     {{
       "name": "Crocin Advance Tablet",
-      "dosage": "1 tablet when required for 5 Days",
-      "instruction": "After food"
+      "dosage": "1 tablet",
+      "instruction": "Take when required",
+      "duration_days": 1
     }}
   ],
-  "advice": "Review with reports"
+  "advice": "Review with reports in 7 days"
 }}
 
 Your entire response MUST be only the JSON object. Do not include any other text or formatting like ```json.
@@ -143,12 +146,24 @@ Here is the text to analyze:
 # --- Core Logic ---
 def get_analysis_from_text(text: str):
     prompt = ANALYSIS_PROMPT_TEMPLATE.format(text_to_analyze=text)
-    cleaned_response = "" # Initialize to ensure it's available in the except block
+    cleaned_response = ""
     try:
         response = llm.invoke(prompt)
         cleaned_response = response.content.strip().replace("```json", "").replace("```", "")
         if not cleaned_response: raise ValueError("LLM returned empty analysis.")
-        return json.loads(cleaned_response)
+        
+        # Validate the structure before returning
+        data = json.loads(cleaned_response)
+        if not isinstance(data.get("medications"), list):
+             raise KeyError("JSON missing 'medications' list.")
+             
+        # Optional: Basic check to ensure the new field is present
+        for med in data["medications"]:
+            if "duration_days" not in med:
+                print("WARNING: Missing 'duration_days' key in a medication object.")
+                
+        return data
+
     except json.JSONDecodeError as e:
         print(f"--- JSON DECODE ERROR ---")
         print(f"Error: {e}")
@@ -158,6 +173,7 @@ def get_analysis_from_text(text: str):
     except Exception as e:
         print(f"Error during AI analysis: {e}")
         raise HTTPException(status_code=500, detail="Could not get a valid analysis from the AI model.")
+
 
 # --- API Endpoints ---
 @app.post("/analyze")
@@ -218,20 +234,64 @@ async def set_reminder_endpoint(reminder_data: ReminderRequest):
         except HTTPException:
             raise HTTPException(status_code=503, detail="Google Calendar service is unavailable. Please run calendar_auth.py to authenticate.")
 
+    if reminder_data.days_duration <= 0:
+         raise HTTPException(status_code=400, detail="Medication duration must be 1 day or more.")
+
     try:
+        # Use pytz to handle timezone conversion correctly
         local_tz = pytz.timezone(TIMEZONE)
         today = datetime.now(local_tz).date()
         hour, minute = map(int, reminder_data.time.split(':'))
+        
+        # Start time of the *first* event instance
         start_datetime = local_tz.localize(datetime(today.year, today.month, today.day, hour, minute))
-        end_datetime = start_datetime + timedelta(minutes=30)
-        event = { 'summary': f"Medication Reminder: Take {reminder_data.name}", 'description': f"Dosage/Instruction: {reminder_data.instruction}", 'start': {'dateTime': start_datetime.isoformat(), 'timeZone': TIMEZONE}, 'end': {'dateTime': end_datetime.isoformat(), 'timeZone': TIMEZONE}, 'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 10}]}, 'recurrence': ['RRULE:FREQ=DAILY;INTERVAL=1']}
+        end_datetime = start_datetime + timedelta(minutes=30) 
+        
+        # --- CALCULATE UNTIL DATE ---
+        # The recurrence stops *after* the final day's occurrence.
+        # We calculate the date of the LAST DOSE (which is today + duration - 1) 
+        # and set the UNTIL time to 23:59:59 on that date.
+        
+        # Calculate the date of the last day the medication should be taken
+        last_dose_date = start_datetime.date() + timedelta(days=reminder_data.days_duration - 1)
+        
+        # Set the UNTIL datetime to the very end of the last dose day, converted to UTC
+        utc_end_of_day = local_tz.localize(datetime(last_dose_date.year, 
+                                                    last_dose_date.month, 
+                                                    last_dose_date.day, 
+                                                    23, 59, 59)).astimezone(pytz.utc)
+
+        # RRULE format requires YYYYMMDDTTHHMMSSZ (UTC)
+        until_string = utc_end_of_day.strftime('%Y%m%dT%H%M%SZ')
+
+        rrule = f'RRULE:FREQ=DAILY;INTERVAL=1;UNTIL={until_string}'
+        
+        # ---------------------------
+
+        event = { 
+            'summary': f"Medication Reminder: Take {reminder_data.name}", 
+            'description': f"Dosage/Instruction: {reminder_data.instruction} (Duration: {reminder_data.days_duration} days)", 
+            'start': {'dateTime': start_datetime.isoformat(), 'timeZone': TIMEZONE}, 
+            'end': {'dateTime': end_datetime.isoformat(), 'timeZone': TIMEZONE}, 
+            'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 10}]}, 
+            'recurrence': [rrule] # Use the calculated RRULE with UNTIL
+        }
+        
         inserted_event = CALENDAR_SERVICE.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-        return { "status": "success", "message": "Reminder created successfully on Google Calendar.", "event_id": inserted_event.get('id'), "calendar_link": inserted_event.get('htmlLink')}
+        
+        return { 
+            "status": "success", 
+            "message": "Reminder created successfully on Google Calendar.", 
+            "event_id": inserted_event.get('id'), 
+            "calendar_link": inserted_event.get('htmlLink')
+        }
     except Exception as e:
+        print(f"Google Calendar API Error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create event in Google Calendar: {str(e)}")
 
 @app.post("/translate")
 async def translate_endpoint(request: TranslationRequest):
+    # ... (Translation logic remains the same)
     if not request.content:
         raise HTTPException(status_code=400, detail="No content provided for translation.")
 
@@ -264,6 +324,7 @@ async def translate_endpoint(request: TranslationRequest):
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
+    # ... (Chat logic remains the same)
     context_str = "No prescription data available."
     if request.analysis_data:
         context_str = f"The user's current prescription analysis is:\n{json.dumps(request.analysis_data, indent=2)}"
@@ -297,6 +358,7 @@ async def chat_endpoint(request: ChatRequest):
 
 @app.post("/find-pharmacies")
 async def find_pharmacies_endpoint(location: LocationRequest):
+    # ... (Pharmacy finding logic remains the same)
     if not maps_api_key:
         raise HTTPException(status_code=503, detail="Google Maps API key is not configured on the server.")
     
@@ -311,24 +373,20 @@ async def find_pharmacies_endpoint(location: LocationRequest):
         results = []
         for place in places_result.get('results', [])[:5]:
             place_id = place.get('place_id')
-            # **FIX IS HERE:** The `geometry` is reliably in the first result, so we grab it here.
             place_geometry = place.get('geometry') 
             
             if not place_id or not place_geometry: 
                 continue
 
-            # We only need to make a second call for the phone number, which isn't in the nearby search result.
             details = gmaps.place(place_id=place_id, fields=['formatted_phone_number'])
             place_details = details.get('result', {})
             
-            # Now we combine the data from both calls.
             results.append({
                 'name': place.get('name'),
                 'address': place.get('vicinity'),
                 'phone': place_details.get('formatted_phone_number', 'N/A'),
-                'geometry': place_geometry # Ensure geometry is included in the final object
+                'geometry': place_geometry 
             })
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred while searching for pharmacies: {str(e)}")
-

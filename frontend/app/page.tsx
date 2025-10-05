@@ -9,12 +9,7 @@ import PharmaciesTab from './components/PharmaciesTab';
 import LoginScreen from './components/LoginScreen';
 
 // --- TypeScript Interfaces ---
-export interface Medication {
-  name: string;
-  dosage: string;
-  instruction: string;
-  duration_days: number;
-}
+export interface Medication { name: string; dosage: string; instruction: string; duration_days: number; }
 export interface AnalysisResult { medications: Medication[]; advice: string; }
 export interface SummaryResult { summary: string; health_tips: string[]; food_interactions: string[]; }
 export interface Reminder { id: string; medicineName: string; time: string; calendarLink: string; }
@@ -22,10 +17,12 @@ export interface ChatMessage { sender: 'user' | 'ai'; text: string; }
 export interface Pharmacy { name: string; address: string; phone: string; geometry?: { location: { lat: number; lng: number; } } }
 export interface Location { lat: number; lng: number; }
 export interface User { email: string; }
-export interface AuthData {
-  accessToken: string;
-  refreshToken: string;
-  user: User;
+export interface AuthData { accessToken: string; refreshToken: string; user: User; }
+export interface PrescriptionData {
+  id: string;
+  fileName: string;
+  analysisResult: AnalysisResult | null;
+  summaryResult: SummaryResult | null;
 }
 
 // --- UI Text Translations ---
@@ -165,12 +162,11 @@ const uiText: { [key: string]: { [key: string]: string } } = {
 };
 
 export default function Home() {
-  // --- State Management ---
   const [authData, setAuthData] = useState<AuthData | null>(null);
   const [activeTab, setActiveTab] = useState('home');
   const [file, setFile] = useState<File | null>(null);
-  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
-  const [summaryResult, setSummaryResult] = useState<SummaryResult | null>(null);
+  const [prescriptions, setPrescriptions] = useState<PrescriptionData[]>([]);
+  const [activePrescriptionId, setActivePrescriptionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -192,9 +188,9 @@ export default function Home() {
   const [editedPrescriptionText, setEditedPrescriptionText] = useState('');
   const [currentUserLocation, setCurrentUserLocation] = useState<Location | null>(null);
 
-  // --- Effects ---
+  const activePrescription = prescriptions.find(p => p.id === activePrescriptionId) || null;
+
   useEffect(() => {
-    // 1. Handle login redirect from Google
     const hash = window.location.hash;
     if (hash) {
       const params = new URLSearchParams(hash.substring(1));
@@ -209,15 +205,12 @@ export default function Home() {
         return;
       }
     }
-
-    // 2. Load authentication data from previous session
     const storedAuth = localStorage.getItem("authData");
     if (storedAuth) {
       setAuthData(JSON.parse(storedAuth));
     }
   }, []);
 
-  // Effect to load application state after user logs in
   useEffect(() => {
     if (authData?.user.email) {
       const appStateKey = `appState-${authData.user.email}`;
@@ -225,39 +218,39 @@ export default function Home() {
       if (storedState) {
         try {
           const state = JSON.parse(storedState);
-          setAnalysisResult(state.analysisResult || null);
-          setSummaryResult(state.summaryResult || null);
+          setPrescriptions(state.prescriptions || []);
+          setActivePrescriptionId(state.activePrescriptionId || (state.prescriptions?.[0]?.id || null));
           setReminders(state.reminders || []);
         } catch (e) {
           console.error("Failed to parse stored app state:", e);
-          localStorage.removeItem(appStateKey); // Clear corrupted state
+          localStorage.removeItem(appStateKey);
         }
       }
     }
   }, [authData]);
 
-  // Effect to save application state when it changes
   useEffect(() => {
     if (authData?.user.email) {
       const appStateKey = `appState-${authData.user.email}`;
-      const stateToSave = { analysisResult, summaryResult, reminders };
+      const stateToSave = { prescriptions, activePrescriptionId, reminders };
       localStorage.setItem(appStateKey, JSON.stringify(stateToSave));
     }
-  }, [analysisResult, summaryResult, reminders, authData]);
-
+  }, [prescriptions, activePrescriptionId, reminders, authData]);
 
   useEffect(() => {
     setChatMessages([{ sender: 'ai', text: uiText[language].initialChatMessage }]);
   }, [language]);
 
   useEffect(() => {
+    const analysisResult = activePrescription?.analysisResult;
+    const summaryResult = activePrescription?.summaryResult;
+
     const translateContent = async () => {
-      if (language === 'en') {
+      if (language === 'en' || !analysisResult) {
         setTranslatedAnalysis(null);
         setTranslatedSummary(null);
         return;
       }
-      if (!analysisResult) return;
       setIsTranslating(true);
       setError(null);
       try {
@@ -281,28 +274,13 @@ export default function Home() {
       }
     };
     translateContent();
-  }, [language, analysisResult, summaryResult]);
+  }, [language, activePrescription]);
 
-  useEffect(() => {
-    if (analysisResult) {
-      const generatedText = analysisResult.medications
-        .map(med => `${med.name} ${med.dosage} ${med.instruction}`)
-        .join('\n');
-      setEditedPrescriptionText(generatedText);
-    }
-  }, [analysisResult]);
-
-  // --- Event Handlers ---
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       setFile(e.target.files[0]);
-      setAnalysisResult(null);
-      setSummaryResult(null);
-      setTranslatedAnalysis(null);
-      setTranslatedSummary(null);
       setError(null);
       setSummaryError(null);
-      setEditedPrescriptionText('');
     }
   };
 
@@ -311,16 +289,24 @@ export default function Home() {
     if (!file) { setError("Please select a prescription image first."); return; }
     setIsLoading(true);
     setError(null);
-    setAnalysisResult(null);
-    setSummaryResult(null);
     const formData = new FormData();
     formData.append("file", file);
     try {
       const response = await fetch("http://localhost:8000/analyze", { method: "POST", body: formData });
       if (!response.ok) throw new Error((await response.json()).detail || "Analysis failed.");
       const result: AnalysisResult = await response.json();
-      setAnalysisResult(result);
+
+      const newPrescription: PrescriptionData = {
+        id: Date.now().toString(),
+        fileName: file.name,
+        analysisResult: result,
+        summaryResult: null
+      };
+
+      setPrescriptions(prev => [...prev, newPrescription]);
+      setActivePrescriptionId(newPrescription.id);
       setActiveTab('analysis');
+      setFile(null);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -329,14 +315,9 @@ export default function Home() {
   };
 
   const handleUpdateAnalysis = async () => {
-    if (!editedPrescriptionText.trim()) {
-      setError("The prescription text cannot be empty.");
-      return;
-    }
+    if (!editedPrescriptionText.trim() || !activePrescriptionId) return;
     setIsLoading(true);
     setError(null);
-    setAnalysisResult(null);
-    setSummaryResult(null);
     try {
       const response = await fetch("http://localhost:8000/re-analyze", {
         method: "POST",
@@ -345,7 +326,10 @@ export default function Home() {
       });
       if (!response.ok) throw new Error((await response.json()).detail || "Re-analysis failed.");
       const result: AnalysisResult = await response.json();
-      setAnalysisResult(result);
+
+      setPrescriptions(prev => prev.map(p =>
+        p.id === activePrescriptionId ? { ...p, analysisResult: result, summaryResult: null } : p
+      ));
       setActiveTab('analysis');
     } catch (err: any) {
       setError(err.message);
@@ -355,12 +339,11 @@ export default function Home() {
   };
 
   const handleGetSummary = async () => {
-    if (!analysisResult) return;
+    if (!activePrescription?.analysisResult) return;
     setIsSummaryLoading(true);
     setSummaryError(null);
-    setSummaryResult(null);
-    setTranslatedSummary(null);
-    const medicationNames = analysisResult.medications.map(med => med.name).filter(name => !['illegible', 'n/a'].includes(name.toLowerCase()));
+
+    const medicationNames = activePrescription.analysisResult.medications.map(med => med.name).filter(name => !['illegible', 'n/a'].includes(name.toLowerCase()));
     if (medicationNames.length === 0) {
       setSummaryError("No valid medication names to summarize.");
       setIsSummaryLoading(false);
@@ -372,7 +355,11 @@ export default function Home() {
         body: JSON.stringify({ medications: medicationNames }),
       });
       if (!response.ok) throw new Error((await response.json()).detail || "Failed to get summary.");
-      setSummaryResult(await response.json());
+      const summary: SummaryResult = await response.json();
+
+      setPrescriptions(prev => prev.map(p =>
+        p.id === activePrescriptionId ? { ...p, summaryResult: summary } : p
+      ));
     } catch (err: any) {
       setSummaryError(err.message);
     } finally {
@@ -387,7 +374,7 @@ export default function Home() {
 
   const refreshAccessToken = async (): Promise<AuthData | null> => {
     if (!authData?.refreshToken) {
-      handleLogout(); // Force logout if no refresh token
+      handleLogout();
       return null;
     }
     try {
@@ -407,17 +394,13 @@ export default function Home() {
     } catch (e) {
       console.error("Token refresh failed:", e);
       alert("Your session has expired. Please log in again.");
-      handleLogout(); // Log out user if refresh fails
+      handleLogout();
       return null;
     }
   };
 
   const handleSetReminder = async () => {
-    if (!authData) {
-      alert("You are not logged in.");
-      return;
-    }
-    if (!selectedMedication) return;
+    if (!authData || !selectedMedication) return;
 
     const reminderData = {
       name: selectedMedication.name,
@@ -428,32 +411,25 @@ export default function Home() {
     };
 
     try {
-      const response = await fetch("http://localhost:8000/set-reminder", {
+      let response = await fetch("http://localhost:8000/set-reminder", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(reminderData),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        if (response.status === 401) {
-          // Token likely expired, try to refresh it
-          const newAuthData = await refreshAccessToken();
-          if (newAuthData) {
-            // Retry the request with the new token
-            const retryResponse = await fetch("http://localhost:8000/set-reminder", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...reminderData, access_token: newAuthData.accessToken }),
-            });
-            if (!retryResponse.ok) throw new Error((await retryResponse.json()).detail || "Failed to set reminder after refresh.");
-            const result = await retryResponse.json();
-            const newReminder: Reminder = { id: result.event_id, medicineName: selectedMedication.name, time: reminderTime, calendarLink: result.calendar_link, };
-            setReminders(prev => [...prev, newReminder]);
-            alert(`Reminder set successfully!`);
-            setIsModalOpen(false);
-            return; // Exit after successful retry
-          }
+      if (response.status === 401) {
+        const newAuthData = await refreshAccessToken();
+        if (newAuthData) {
+          response = await fetch("http://localhost:8000/set-reminder", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...reminderData, access_token: newAuthData.accessToken }),
+          });
+        } else {
+          return;
         }
-        throw new Error(errorData.detail || `Failed to set reminder.`);
+      }
+
+      if (!response.ok) {
+        throw new Error((await response.json()).detail || "Failed to set reminder.");
       }
 
       const result = await response.json();
@@ -461,7 +437,7 @@ export default function Home() {
       setReminders(prev => [...prev, newReminder]);
       alert(`Reminder set successfully!`);
       setIsModalOpen(false);
-
+      setActiveTab('reminders');
     } catch (err: any) {
       alert(`Error setting reminder: ${err.message}`);
     }
@@ -469,7 +445,6 @@ export default function Home() {
 
   const handleDeleteReminder = (reminderId: string) => {
     setReminders(prev => prev.filter(r => r.id !== reminderId));
-    alert("Reminder removed from local list. You must manually delete the recurring event from Google Calendar.");
   };
 
   const handleSendMessage = async () => {
@@ -484,7 +459,7 @@ export default function Home() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: newMessages.map(m => ({ role: m.sender, text: m.text })),
-          analysis_data: analysisResult
+          analysis_data: activePrescription?.analysisResult
         }),
       });
       if (!response.ok) throw new Error((await response.json()).detail || "Failed to get response.");
@@ -502,13 +477,11 @@ export default function Home() {
     setPharmacyError(null);
     setPharmacies([]);
     setCurrentUserLocation(null);
-
     if (!navigator.geolocation) {
       setPharmacyError("Geolocation is not supported by your browser.");
       setIsFindingPharmacies(false);
       return;
     }
-
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
@@ -537,29 +510,36 @@ export default function Home() {
     );
   };
 
-  // --- MODIFIED LOGOUT FUNCTION ---
   const handleLogout = () => {
-    // Clear the auth data from state and localStorage to end the session
     setAuthData(null);
     localStorage.removeItem("authData");
-
-    // Clear the current React state to reset the UI, but DO NOT remove the saved app state from localStorage
-    setAnalysisResult(null);
-    setSummaryResult(null);
+    setPrescriptions([]);
+    setActivePrescriptionId(null);
     setReminders([]);
     setFile(null);
     setError(null);
     setSummaryError(null);
   };
 
-  const displayAnalysis = translatedAnalysis || analysisResult;
-  const displaySummary = translatedSummary || summaryResult;
+  const displayAnalysis = translatedAnalysis || activePrescription?.analysisResult;
+  const displaySummary = translatedSummary || activePrescription?.summaryResult;
   const currentText = uiText[language] || uiText['en'];
 
   const renderTabContent = () => {
     switch (activeTab) {
       case 'analysis':
-        return <AnalysisTab displayAnalysis={displayAnalysis} displaySummary={displaySummary} isSummaryLoading={isSummaryLoading} summaryError={summaryError} handleGetSummary={handleGetSummary} openReminderModal={openReminderModal} currentText={currentText} />;
+        return <AnalysisTab
+          displayAnalysis={displayAnalysis}
+          displaySummary={displaySummary}
+          isSummaryLoading={isSummaryLoading}
+          summaryError={summaryError}
+          handleGetSummary={handleGetSummary}
+          openReminderModal={openReminderModal}
+          currentText={currentText}
+          prescriptions={prescriptions}
+          activePrescriptionId={activePrescriptionId}
+          setActivePrescriptionId={setActivePrescriptionId}
+        />;
       case 'reminders':
         return <RemindersTab reminders={reminders} handleDeleteReminder={handleDeleteReminder} currentText={currentText} />;
       case 'pharmacies':
@@ -568,7 +548,21 @@ export default function Home() {
         return <AssistantTab chatMessages={chatMessages} currentMessage={currentMessage} setCurrentMessage={setCurrentMessage} handleSendMessage={handleSendMessage} isChatLoading={isChatLoading} currentText={currentText} />;
       case 'home':
       default:
-        return <HomeTab handleSubmit={handleSubmit} handleFileChange={handleFileChange} isLoading={isLoading} file={file} error={error} currentText={currentText} analysisResult={analysisResult} editedPrescriptionText={editedPrescriptionText} setEditedPrescriptionText={setEditedPrescriptionText} handleUpdateAnalysis={handleUpdateAnalysis} />;
+        return <HomeTab
+          handleSubmit={handleSubmit}
+          handleFileChange={handleFileChange}
+          isLoading={isLoading}
+          file={file}
+          error={error}
+          currentText={currentText}
+          analysisResult={activePrescription?.analysisResult}
+          editedPrescriptionText={editedPrescriptionText}
+          setEditedPrescriptionText={setEditedPrescriptionText}
+          handleUpdateAnalysis={handleUpdateAnalysis}
+          prescriptions={prescriptions}
+          activePrescriptionId={activePrescriptionId}
+          setActivePrescriptionId={setActivePrescriptionId}
+        />;
     }
   };
 

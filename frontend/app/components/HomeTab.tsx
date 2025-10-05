@@ -1,19 +1,24 @@
+// frontend/app/components/HomeTab.tsx
+
 "use client";
 
-import { AnalysisResult } from '../page';
+import { useEffect } from 'react';
 
+// Define the props this component will receive
 interface HomeTabProps {
-    handleSubmit: (e: React.FormEvent) => Promise<void>;
+    handleSubmit: (e: React.FormEvent) => void;
     handleFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
     isLoading: boolean;
     file: File | null;
     error: string | null;
     currentText: { [key: string]: string };
-    // New props for editable prescription
-    analysisResult: AnalysisResult | null;
+    analysisResult: any; // The analysis result of the currently active prescription
     editedPrescriptionText: string;
     setEditedPrescriptionText: (text: string) => void;
     handleUpdateAnalysis: () => void;
+    prescriptions: any[]; // The list of all prescriptions
+    activePrescriptionId: string | null;
+    setActivePrescriptionId: (id: string) => void;
 }
 
 export default function HomeTab({
@@ -26,40 +31,94 @@ export default function HomeTab({
     analysisResult,
     editedPrescriptionText,
     setEditedPrescriptionText,
-    handleUpdateAnalysis
+    handleUpdateAnalysis,
+    prescriptions,
+    activePrescriptionId,
+    setActivePrescriptionId
 }: HomeTabProps) {
+
+    // When the active prescription changes, update the text in the edit box
+    useEffect(() => {
+        if (analysisResult) {
+            const generatedText = analysisResult.medications
+                .map((med: any) => `${med.name} ${med.dosage} ${med.instruction}`)
+                .join('\n');
+            setEditedPrescriptionText(generatedText);
+        } else {
+            setEditedPrescriptionText('');
+        }
+    }, [analysisResult, setEditedPrescriptionText]);
+
     return (
-        <>
-            <div className="bg-white mt-8 p-6 sm:p-8 rounded-xl shadow-lg border border-gray-200">
-                <form onSubmit={handleSubmit}>
-                    <label htmlFor="file-upload" className="block text-lg font-medium text-gray-700 mb-2">{currentText.uploadLabel}</label>
-                    <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-4">
-                        <input id="file-upload" type="file" accept="image/*" onChange={handleFileChange} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" suppressHydrationWarning={true} />
-                        <button type="submit" disabled={isLoading || !file} className="w-full sm:w-auto px-6 py-3 text-base font-medium text-white bg-blue-600 rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-400">{isLoading ? currentText.analyzingButton : currentText.analyzeButton}</button>
+        <div className="bg-white p-6 rounded-lg shadow-md">
+            {/* --- Prescription Switcher --- */}
+            {prescriptions.length > 0 && (
+                <div className="mb-6">
+                    <h3 className="text-lg font-semibold text-gray-700 mb-2">Your Prescriptions</h3>
+                    <div className="flex flex-wrap gap-2">
+                        {prescriptions.map((p, index) => (
+                            <button
+                                key={p.id}
+                                onClick={() => setActivePrescriptionId(p.id)}
+                                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${p.id === activePrescriptionId
+                                        ? 'bg-blue-600 text-white shadow'
+                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                    }`}
+                            >
+                                {`P${index + 1}: ${p.fileName}`}
+                            </button>
+                        ))}
                     </div>
-                    {file && <p className="text-sm text-gray-500 mt-3">Selected file: {file.name}</p>}
-                </form>
-            </div>
+                </div>
+            )}
 
-            {error && <div className="mt-6 p-4 bg-red-100 border text-red-700 rounded-lg text-center"><strong>Error:</strong> {error}</div>}
-            {isLoading && <div className="mt-8 text-center"><div className="flex justify-center items-center space-x-2"><svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span className="text-lg font-medium text-gray-700">{currentText.loadingAnalysis}</span></div></div>}
+            {/* --- File Upload Form --- */}
+            <form onSubmit={handleSubmit} className="mb-6">
+                <label htmlFor="file-upload" className="block text-lg font-semibold text-gray-700 mb-2">
+                    {currentText.uploadLabel}
+                </label>
+                <div className="flex items-center space-x-4">
+                    <input
+                        id="file-upload"
+                        type="file"
+                        onChange={handleFileChange}
+                        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                        accept="image/*"
+                    />
+                    <button
+                        type="submit"
+                        disabled={isLoading || !file}
+                        className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                        {isLoading ? currentText.analyzingButton : currentText.analyzeButton}
+                    </button>
+                </div>
+                {file && <p className="text-sm text-gray-500 mt-2">Selected: {file.name}</p>}
+            </form>
 
-            {/* New Editable Prescription Section */}
+            {error && <p className="text-red-500 text-center mb-4">{error}</p>}
+
+            {/* --- Edit Prescription Text Area --- */}
             {analysisResult && (
-                <div className="bg-white mt-8 p-6 sm:p-8 rounded-xl shadow-lg border border-gray-200">
-                    <h2 className="text-2xl font-semibold text-gray-800 mb-4">Edit Prescription for Accuracy</h2>
-                    <p className="text-gray-600 mb-4">The text below was extracted from your prescription. You can correct any errors and re-run the analysis.</p>
+                <div>
+                    <h3 className="text-lg font-semibold text-gray-700 mb-2">Edit Extracted Text</h3>
+                    <p className="text-sm text-gray-500 mb-2">
+                        Correct any errors from the OCR scan below and click "Re-Analyze" to update the results.
+                    </p>
                     <textarea
                         value={editedPrescriptionText}
                         onChange={(e) => setEditedPrescriptionText(e.target.value)}
-                        rows={8}
-                        className="w-full p-2 border border-gray-300 rounded-md mb-4 text-black bg-gray-50 focus:ring-2 focus:ring-blue-500"
+                        className="w-full h-40 p-2 border border-gray-300 rounded-md text-black"
                     />
-                    <button onClick={handleUpdateAnalysis} disabled={isLoading} className="w-full sm:w-auto px-6 py-3 text-base font-medium text-white bg-purple-600 rounded-lg shadow-md hover:bg-purple-700 disabled:bg-gray-400">
-                        {isLoading ? "Updating..." : "Update Analysis"}
+                    <button
+                        onClick={handleUpdateAnalysis}
+                        disabled={isLoading}
+                        className="mt-2 px-6 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+                    >
+                        {isLoading ? currentText.analyzingButton : "Re-Analyze"}
                     </button>
                 </div>
             )}
-        </>
+        </div>
     );
 }

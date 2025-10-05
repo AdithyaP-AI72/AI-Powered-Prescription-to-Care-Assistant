@@ -14,6 +14,8 @@ AI Assistant: A conversational agent to answer questions about your prescription
 
 Multi-Language Support: The interface and analysis results can be translated into Hindi, Kannada, and Tamil.
 
+Secure Login: Enables safe sign-in with local storage to protect data and ensure seamless access.
+
 Voice Input: Use your voice to interact with the AI Assistant.
 
 Tech Stack
@@ -60,6 +62,8 @@ Windows: Download and run the installer from Tesseract at UB Mannheim. Important
 macOS (using Homebrew): brew install tesseract
 
 Linux (Debian/Ubuntu): sudo apt-get install tesseract-ocr
+
+🚨 Ensure that in main.py the line -- pytesseract.pytesseract.tesseract_cmd = r" The path where tesseract is downloaded ".
 
 🚀 Setup Instructions
 1. API Keys & Security Notice

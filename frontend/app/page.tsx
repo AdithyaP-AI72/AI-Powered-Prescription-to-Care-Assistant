@@ -7,8 +7,14 @@ import RemindersTab from './components/RemindersTab';
 import AssistantTab from './components/AssistantTab';
 import PharmaciesTab from './components/PharmaciesTab';
 
-// --- TypeScript Interfaces ---
-export interface Medication { name: string; dosage: string; instruction: string; }
+// --- TypeScript Interfaces (UPDATED for Duration) ---
+// NOTE: Must match the output of the /analyze endpoint (which now includes duration_days)
+export interface Medication { 
+    name: string; 
+    dosage: string; 
+    instruction: string; 
+    duration_days: number; // ADDED: Must be present in AI's JSON output
+} 
 export interface AnalysisResult { medications: Medication[]; advice: string; }
 export interface SummaryResult { summary: string; health_tips: string[]; food_interactions: string[]; }
 export interface Reminder { id: string; medicineName: string; time: string; calendarLink: string; }
@@ -33,6 +39,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     medicine: "Medicine",
     dosage: "Dosage",
     instruction: "Instruction",
+    duration: "Duration", // ADDED for table header
     reminders: "Reminders",
     setReminderButton: "Set Google Reminder",
     doctorsAdvice: "Doctor's Advice",
@@ -47,6 +54,9 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     chatPlaceholder: "Ask about your medication...",
     chatHeader: "Healthcare Agent",
     initialChatMessage: "Hello! I am your AI Healthcare Agent. Once you have analyzed a prescription, you can ask me questions about it.",
+    // New Modal Text
+    modalDuration: "Duration:",
+    modalNote: "A daily recurring event will be created in your Google Calendar and will stop automatically after ",
   },
   hi: {
     title: "पर्सनल केयर असिस्टेंट के लिए प्रिस्क्रिप्शन",
@@ -63,6 +73,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     medicine: "दवा",
     dosage: "खुराक",
     instruction: "निर्देश",
+    duration: "अवधि", // ADDED
     reminders: "अनुस्मारक",
     setReminderButton: "गूगल रिमाइंडर सेट करें",
     doctorsAdvice: "डॉक्टर की सलाह",
@@ -77,6 +88,9 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     chatPlaceholder: "अपनी दवा के बारे में पूछें...",
     chatHeader: "हेल्थकेयर एजेंट",
     initialChatMessage: "नमस्ते! मैं आपका AI हेल्थकेयर एजेंट हूँ। एक बार जब आप प्रिस्क्रिप्शन का विश्लेषण कर लेते हैं, तो आप मुझसे इसके बारे में प्रश्न पूछ सकते हैं।",
+    // New Modal Text
+    modalDuration: "अवधि:",
+    modalNote: "आपके गूगल कैलेंडर में चयनित समय पर एक दैनिक आवर्ती ईवेंट बनाया जाएगा और यह स्वचालित रूप से ",
   },
   kn: {
     title: "ವೈಯಕ್ತಿಕ ಆರೈಕೆ ಸಹಾಯಕರಿಗೆ ಪ್ರಿಸ್ಕ್ರಿಪ್ಷನ್",
@@ -93,6 +107,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     medicine: "ಔಷಧಿ",
     dosage: "ಡೋಸೇಜ್",
     instruction: "ಸೂಚನೆ",
+    duration: "ಅವಧಿ", // ADDED
     reminders: "ಜ್ಞಾಪನೆಗಳು",
     setReminderButton: "ಗೂಗಲ್ ಜ್ಞಾಪನೆ ಹೊಂದಿಸಿ",
     doctorsAdvice: "ವೈದ್ಯರ ಸಲಹೆ",
@@ -107,6 +122,9 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     chatPlaceholder: "ನಿಮ್ಮ ಔಷಧಿ ಬಗ್ಗೆ ಕೇಳಿ...",
     chatHeader: "ಆರೋಗ್ಯ ಏಜೆಂಟ್",
     initialChatMessage: "ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ AI ಆರೋಗ್ಯ ಏಜೆಂಟ್. ನೀವು ಪ್ರಿಸ್ಕ್ರಿಪ್ಷನ್ ಅನ್ನು ವಿಶ್ಲೇಷಿಸಿದ ನಂತರ, ನೀವು ಅದರ ಬಗ್ಗೆ ನನಗೆ ಪ್ರಶ್ನೆಗಳನ್ನು ಕೇಳಬಹುದು.",
+    // New Modal Text
+    modalDuration: "ಅವಧಿ:",
+    modalNote: "ಆಯ್ದ ಸಮಯದಲ್ಲಿ ನಿಮ್ಮ Google ಕ್ಯಾಲೆಂಡರ್‌ನಲ್ಲಿ ದೈನಂದಿನ ಮರುಕಳಿಸುವ ಈವೆಂಟ್ ಅನ್ನು ರಚಿಸಲಾಗುತ್ತದೆ ಮತ್ತು ಅದು ಸ್ವಯಂಚಾಲಿತವಾಗಿ ",
   },
   ta: {
     title: "தனிப்பட்ட பராமரிப்பு உதவியாளருக்கான மருந்துச்சீட்டு",
@@ -123,6 +141,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     medicine: "மருந்து",
     dosage: "மருந்தளவு",
     instruction: "வழிமுறை",
+    duration: "காலம்", // ADDED
     reminders: "நினைவூட்டல்கள்",
     setReminderButton: "கூகிள் நினைவூட்டலை அமைக்கவும்",
     doctorsAdvice: "மருத்துவரின் ஆலோசனை",
@@ -137,6 +156,9 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     chatPlaceholder: "உங்கள் மருந்து பற்றி கேளுங்கள்...",
     chatHeader: "சுகாதார முகவர்",
     initialChatMessage: "வணக்கம்! நான் உங்கள் AI சுகாதார முகவர். நீங்கள் ஒரு மருந்துச்சீட்டை பகுப்பாய்வு செய்தவுடன், அதைப் பற்றி என்னிடம் கேள்விகளைக் கேட்கலாம்.",
+    // New Modal Text
+    modalDuration: "காலம்:",
+    modalNote: "உங்கள் கூகிள் கேலெண்டரில் தேர்ந்தெடுக்கப்பட்ட நேரத்தில் ஒரு தினசரி மீண்டும் மீண்டும் வரும் நிகழ்வு உருவாக்கப்படும், மேலும் இது தானாகவே ",
   },
 };
 
@@ -152,7 +174,8 @@ export default function Home() {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null);
+  // NOTE: selectedMedication type is now the new interface with duration_days
+  const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null); 
   const [reminderTime, setReminderTime] = useState("09:00");
   const [language, setLanguage] = useState('en');
   const [isTranslating, setIsTranslating] = useState(false);
@@ -171,6 +194,24 @@ export default function Home() {
   useEffect(() => {
     setChatMessages([{ sender: 'ai', text: uiText[language].initialChatMessage }]);
   }, [language]);
+
+  // Load reminders from localStorage on initial render (Keeping this for robustness)
+  useEffect(() => {
+    try {
+      const storedReminders = localStorage.getItem('googleCalendarReminders');
+      if (storedReminders) {
+        setReminders(JSON.parse(storedReminders));
+      }
+    } catch (e) {
+      console.error("Failed to parse reminders from localStorage", e);
+    }
+  }, []);
+
+  // Save reminders to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('googleCalendarReminders', JSON.stringify(reminders));
+  }, [reminders]);
+
 
   useEffect(() => {
     const translateContent = async () => {
@@ -241,7 +282,8 @@ export default function Home() {
       const response = await fetch("http://localhost:8000/analyze", { method: "POST", body: formData });
       if (!response.ok) throw new Error((await response.json()).detail || "Analysis failed.");
       const result: AnalysisResult = await response.json();
-      setAnalysisResult(result);
+      // NOTE: The result now contains the duration_days field from the backend
+      setAnalysisResult(result); 
       setActiveTab('analysis');
     } catch (err: any) {
       setError(err.message);
@@ -307,21 +349,64 @@ export default function Home() {
     setIsModalOpen(true);
   };
 
+  // --- UPDATED: Sends duration to backend ---
   const handleSetReminder = async () => {
-    if (!selectedMedication) return;
+    // Ensure selectedMedication is available and has the duration field
+    if (!selectedMedication || typeof selectedMedication.duration_days !== 'number') {
+        alert("Error: Medication data is incomplete. Please re-analyze the prescription.");
+        return;
+    }
+
+    const daysDuration = selectedMedication.duration_days;
+
+    // Validation check for duration
+    if (daysDuration <= 0) {
+        alert("Cannot set reminder: Medication duration is 0 or less days. Please manually adjust the prescription text in the Home tab and re-analyze.");
+        return;
+    }
+
+    // Data to send to FastAPI /set-reminder endpoint
+    const reminderData = {
+      name: selectedMedication.name,
+      instruction: selectedMedication.instruction,
+      time: reminderTime, // HH:MM string
+      days_duration: daysDuration, // CRITICAL: Send the duration
+    };
+    
+    setSummaryError(null); // Clear any previous summary errors
+
     try {
       const response = await fetch("http://localhost:8000/set-reminder", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: selectedMedication.name, instruction: selectedMedication.instruction, time: reminderTime }),
+        body: JSON.stringify(reminderData),
       });
-      if (!response.ok) throw new Error((await response.json()).detail || "Failed to set reminder.");
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        // IMPROVED ERROR HANDLING: Ensure we display the backend's detailed error message
+        throw new Error(errorData.detail || `Failed to set reminder (Status: ${response.status}).`);
+      }
+
       const result = await response.json();
-      setReminders(prev => [...prev, { id: result.event_id, medicineName: selectedMedication.name, time: reminderTime, calendarLink: result.calendar_link }]);
-      alert(`Reminder set!`);
+      
+      // Update local state with the Google Calendar Event ID and Link
+      const newReminder: Reminder = {
+        id: result.event_id, 
+        medicineName: selectedMedication.name,
+        time: reminderTime,
+        calendarLink: result.calendar_link,
+      };
+
+      setReminders(prev => [...prev, newReminder]);
+      
+      alert(`Reminder set successfully! Event created for ${daysDuration} days in Google Calendar.`);
+      
       setIsModalOpen(false);
-      setActiveTab('reminders');
+      setSelectedMedication(null);
+      
     } catch (err: any) {
-      alert(`Error setting reminder: ${err.message}`);
+      // The old error "Error setting reminder: [object Object]" is fixed by accessing err.message
+      alert(`Error setting reminder: ${err.message || 'Check the backend console for details.'}`);
     }
   };
 
@@ -400,6 +485,7 @@ export default function Home() {
   const currentText = uiText[language] || uiText['en'];
 
   const renderTabContent = () => {
+    // Pass the duration info to AnalysisTab
     switch (activeTab) {
       case 'analysis':
         return <AnalysisTab displayAnalysis={displayAnalysis} displaySummary={displaySummary} isSummaryLoading={isSummaryLoading} summaryError={summaryError} handleGetSummary={handleGetSummary} openReminderModal={openReminderModal} currentText={currentText} />;
@@ -455,11 +541,21 @@ export default function Home() {
 
       </div>
 
+      {/* Reminder Modal (UPDATED to show duration) */}
       {isModalOpen && selectedMedication && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
           <div className="bg-white p-8 rounded-lg shadow-xl max-w-sm w-full">
             <h3 className="text-xl font-semibold mb-4">Set Reminder for {selectedMedication.name}</h3>
-            <p className="text-gray-600 mb-4">A **DAILY** recurring event will be created in your Google Calendar at the selected time.</p>
+            
+            <p className="text-gray-600 mb-2">
+                {currentText.modalDuration} 
+                <strong className="text-indigo-600">{selectedMedication.duration_days} days</strong>
+            </p>
+            <p className="text-gray-600 mb-4 text-sm">
+              {currentText.modalNote}
+              {language === 'en' ? `${selectedMedication.duration_days} days.` : `${selectedMedication.duration_days} ದಿನಗಳ ನಂತರ.` /* Crude translation for 'days' end */}
+            </p>
+            
             <input type="time" value={reminderTime} onChange={(e) => setReminderTime(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md mb-6" />
             <div className="flex justify-end space-x-4">
               <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300">Cancel</button>

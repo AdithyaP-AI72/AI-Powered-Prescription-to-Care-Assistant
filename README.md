@@ -61,9 +61,9 @@ macOS (using Homebrew): brew install tesseract
 
 Linux (Debian/Ubuntu): sudo apt-get install tesseract-ocr
 
-Setup Instructions
+🚀 Setup Instructions
 1. API Keys & Security Notice
-IMPORTANT: For the purpose of this hackathon, the necessary API keys have been pre-configured in the .env (backend) and .env.local (frontend) files.
+⚠️ IMPORTANT: For the purpose of this hackathon, the necessary API keys have been pre-configured in the .env (backend) and .env.local (frontend) files.
 
 2. Backend Setup
 Navigate to your backend directory from the terminal.

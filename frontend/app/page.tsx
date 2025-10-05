@@ -6,21 +6,29 @@ import AnalysisTab from './components/AnalysisTab';
 import RemindersTab from './components/RemindersTab';
 import AssistantTab from './components/AssistantTab';
 import PharmaciesTab from './components/PharmaciesTab';
+import LoginScreen from './components/LoginScreen'; // New import
 
 // --- TypeScript Interfaces (UPDATED for Duration) ---
 // NOTE: Must match the output of the /analyze endpoint (which now includes duration_days)
-export interface Medication { 
-    name: string; 
-    dosage: string; 
-    instruction: string; 
-    duration_days: number; // ADDED: Must be present in AI's JSON output
-} 
+export interface Medication {
+  name: string;
+  dosage: string;
+  instruction: string;
+  duration_days: number; // ADDED: Must be present in AI's JSON output
+}
 export interface AnalysisResult { medications: Medication[]; advice: string; }
 export interface SummaryResult { summary: string; health_tips: string[]; food_interactions: string[]; }
 export interface Reminder { id: string; medicineName: string; time: string; calendarLink: string; }
 export interface ChatMessage { sender: 'user' | 'ai'; text: string; }
 export interface Pharmacy { name: string; address: string; phone: string; geometry?: { location: { lat: number; lng: number; } } }
 export interface Location { lat: number; lng: number; } // For user location
+// NEW Interfaces for Auth and User
+export interface User { email: string; }
+export interface AuthData {
+  accessToken: string;
+  refreshToken: string;
+  user: User;
+}
 
 // --- UI Text Translations ---
 const uiText: { [key: string]: { [key: string]: string } } = {
@@ -164,6 +172,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
 
 export default function Home() {
   // --- State Management ---
+  const [authData, setAuthData] = useState<AuthData | null>(null);
   const [activeTab, setActiveTab] = useState('home');
   const [file, setFile] = useState<File | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -174,8 +183,7 @@ export default function Home() {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  // NOTE: selectedMedication type is now the new interface with duration_days
-  const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null); 
+  const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null);
   const [reminderTime, setReminderTime] = useState("09:00");
   const [language, setLanguage] = useState('en');
   const [isTranslating, setIsTranslating] = useState(false);
@@ -192,26 +200,61 @@ export default function Home() {
 
   // --- Effects ---
   useEffect(() => {
-    setChatMessages([{ sender: 'ai', text: uiText[language].initialChatMessage }]);
-  }, [language]);
-
-  // Load reminders from localStorage on initial render (Keeping this for robustness)
-  useEffect(() => {
-    try {
-      const storedReminders = localStorage.getItem('googleCalendarReminders');
-      if (storedReminders) {
-        setReminders(JSON.parse(storedReminders));
+    // 1. Handle login redirect from Google
+    const hash = window.location.hash;
+    if (hash) {
+      const params = new URLSearchParams(hash.substring(1));
+      const accessToken = params.get("access_token");
+      const refreshToken = params.get("refresh_token");
+      const email = params.get("email");
+      if (accessToken && refreshToken && email) {
+        const newAuthData = { accessToken, refreshToken, user: { email } };
+        setAuthData(newAuthData);
+        localStorage.setItem("authData", JSON.stringify(newAuthData));
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+        return;
       }
-    } catch (e) {
-      console.error("Failed to parse reminders from localStorage", e);
+    }
+
+    // 2. Load authentication data from previous session
+    const storedAuth = localStorage.getItem("authData");
+    if (storedAuth) {
+      setAuthData(JSON.parse(storedAuth));
     }
   }, []);
 
-  // Save reminders to localStorage whenever they change
+  // Effect to load application state after user logs in
   useEffect(() => {
-    localStorage.setItem('googleCalendarReminders', JSON.stringify(reminders));
-  }, [reminders]);
+    if (authData?.user.email) {
+      const appStateKey = `appState-${authData.user.email}`;
+      const storedState = localStorage.getItem(appStateKey);
+      if (storedState) {
+        try {
+          const state = JSON.parse(storedState);
+          setAnalysisResult(state.analysisResult || null);
+          setSummaryResult(state.summaryResult || null);
+          setReminders(state.reminders || []);
+        } catch (e) {
+          console.error("Failed to parse stored app state:", e);
+          localStorage.removeItem(appStateKey); // Clear corrupted state
+        }
+      }
+    }
+  }, [authData]);
 
+  // Effect to save application state when it changes
+  useEffect(() => {
+    if (authData?.user.email) {
+      const appStateKey = `appState-${authData.user.email}`;
+      const stateToSave = { analysisResult, summaryResult, reminders };
+      localStorage.setItem(appStateKey, JSON.stringify(stateToSave));
+    }
+  }, [analysisResult, summaryResult, reminders, authData]);
+
+
+  useEffect(() => {
+    setChatMessages([{ sender: 'ai', text: uiText[language].initialChatMessage }]);
+  }, [language]);
 
   useEffect(() => {
     const translateContent = async () => {
@@ -282,8 +325,7 @@ export default function Home() {
       const response = await fetch("http://localhost:8000/analyze", { method: "POST", body: formData });
       if (!response.ok) throw new Error((await response.json()).detail || "Analysis failed.");
       const result: AnalysisResult = await response.json();
-      // NOTE: The result now contains the duration_days field from the backend
-      setAnalysisResult(result); 
+      setAnalysisResult(result);
       setActiveTab('analysis');
     } catch (err: any) {
       setError(err.message);
@@ -349,31 +391,46 @@ export default function Home() {
     setIsModalOpen(true);
   };
 
-  // --- UPDATED: Sends duration to backend ---
+  const refreshAccessToken = async (): Promise<AuthData | null> => {
+    if (!authData?.refreshToken) {
+      handleLogout(); // Force logout if no refresh token
+      return null;
+    }
+    try {
+      const response = await fetch("http://localhost:8000/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: authData.refreshToken })
+      });
+      if (!response.ok) {
+        throw new Error("Failed to refresh token.");
+      }
+      const { access_token } = await response.json();
+      const newAuthData = { ...authData, accessToken: access_token };
+      setAuthData(newAuthData);
+      localStorage.setItem("authData", JSON.stringify(newAuthData));
+      return newAuthData;
+    } catch (e) {
+      console.error("Token refresh failed:", e);
+      handleLogout(); // Log out user if refresh fails
+      return null;
+    }
+  };
+
   const handleSetReminder = async () => {
-    // Ensure selectedMedication is available and has the duration field
-    if (!selectedMedication || typeof selectedMedication.duration_days !== 'number') {
-        alert("Error: Medication data is incomplete. Please re-analyze the prescription.");
-        return;
+    if (!authData) {
+      alert("You are not logged in.");
+      return;
     }
+    if (!selectedMedication) return;
 
-    const daysDuration = selectedMedication.duration_days;
-
-    // Validation check for duration
-    if (daysDuration <= 0) {
-        alert("Cannot set reminder: Medication duration is 0 or less days. Please manually adjust the prescription text in the Home tab and re-analyze.");
-        return;
-    }
-
-    // Data to send to FastAPI /set-reminder endpoint
     const reminderData = {
       name: selectedMedication.name,
       instruction: selectedMedication.instruction,
-      time: reminderTime, // HH:MM string
-      days_duration: daysDuration, // CRITICAL: Send the duration
+      time: reminderTime,
+      days_duration: selectedMedication.duration_days,
+      access_token: authData.accessToken,
     };
-    
-    setSummaryError(null); // Clear any previous summary errors
 
     try {
       const response = await fetch("http://localhost:8000/set-reminder", {
@@ -383,30 +440,35 @@ export default function Home() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        // IMPROVED ERROR HANDLING: Ensure we display the backend's detailed error message
-        throw new Error(errorData.detail || `Failed to set reminder (Status: ${response.status}).`);
+        if (response.status === 401) {
+          // Token likely expired, try to refresh it
+          const newAuthData = await refreshAccessToken();
+          if (newAuthData) {
+            // Retry the request with the new token
+            const retryResponse = await fetch("http://localhost:8000/set-reminder", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ...reminderData, access_token: newAuthData.accessToken }),
+            });
+            if (!retryResponse.ok) throw new Error((await retryResponse.json()).detail || "Failed to set reminder after refresh.");
+            const result = await retryResponse.json();
+            const newReminder: Reminder = { id: result.event_id, medicineName: selectedMedication.name, time: reminderTime, calendarLink: result.calendar_link, };
+            setReminders(prev => [...prev, newReminder]);
+            alert(`Reminder set successfully!`);
+            setIsModalOpen(false);
+            return; // Exit after successful retry
+          }
+        }
+        throw new Error(errorData.detail || `Failed to set reminder.`);
       }
 
       const result = await response.json();
-      
-      // Update local state with the Google Calendar Event ID and Link
-      const newReminder: Reminder = {
-        id: result.event_id, 
-        medicineName: selectedMedication.name,
-        time: reminderTime,
-        calendarLink: result.calendar_link,
-      };
-
+      const newReminder: Reminder = { id: result.event_id, medicineName: selectedMedication.name, time: reminderTime, calendarLink: result.calendar_link, };
       setReminders(prev => [...prev, newReminder]);
-      
-      alert(`Reminder set successfully! Event created for ${daysDuration} days in Google Calendar.`);
-      
+      alert(`Reminder set successfully!`);
       setIsModalOpen(false);
-      setSelectedMedication(null);
-      
+
     } catch (err: any) {
-      // The old error "Error setting reminder: [object Object]" is fixed by accessing err.message
-      alert(`Error setting reminder: ${err.message || 'Check the backend console for details.'}`);
+      alert(`Error setting reminder: ${err.message}`);
     }
   };
 
@@ -480,12 +542,24 @@ export default function Home() {
     );
   };
 
+  const handleLogout = () => {
+    setAuthData(null);
+    localStorage.removeItem("authData");
+    // Also clear the app state for the logged-out user
+    if (authData?.user.email) {
+      localStorage.removeItem(`appState-${authData.user.email}`);
+    }
+    // Also clear the current state to ensure a clean slate
+    setAnalysisResult(null);
+    setSummaryResult(null);
+    setReminders([]);
+  };
+
   const displayAnalysis = translatedAnalysis || analysisResult;
   const displaySummary = translatedSummary || summaryResult;
   const currentText = uiText[language] || uiText['en'];
 
   const renderTabContent = () => {
-    // Pass the duration info to AnalysisTab
     switch (activeTab) {
       case 'analysis':
         return <AnalysisTab displayAnalysis={displayAnalysis} displaySummary={displaySummary} isSummaryLoading={isSummaryLoading} summaryError={summaryError} handleGetSummary={handleGetSummary} openReminderModal={openReminderModal} currentText={currentText} />;
@@ -501,6 +575,10 @@ export default function Home() {
     }
   };
 
+  if (!authData) {
+    return <LoginScreen />;
+  }
+
   return (
     <main className="flex min-h-screen flex-col items-center p-4 sm:p-8 md:p-12 bg-gray-50 font-sans">
       {isTranslating && (
@@ -513,16 +591,22 @@ export default function Home() {
       )}
 
       <div className="w-full max-w-4xl mx-auto">
-        <div className="text-center mb-4">
-          <h1 className="text-4xl sm:text-5xl font-bold text-gray-800">{currentText.title}</h1>
-          <p className="text-lg text-gray-600 mt-2">{currentText.subtitle}</p>
-        </div>
-
-        <div className="flex justify-end items-center mb-4">
-          <label htmlFor="language-select" className="mr-2 font-medium text-gray-700">{currentText.languageSelector}</label>
-          <select id="language-select" value={language} onChange={(e) => setLanguage(e.target.value)} className="p-2 border border-gray-300 rounded-md shadow-sm text-black">
-            <option value="en">English</option><option value="hi">हिंदी (Hindi)</option><option value="kn">ಕನ್ನಡ (Kannada)</option><option value="ta">தமிழ் (Tamil)</option>
-          </select>
+        <div className="flex justify-between items-center mb-4">
+          <div className="text-left flex-1">
+            <h1 className="text-3xl sm:text-4xl font-bold text-gray-800">{currentText.title}</h1>
+            <p className="text-md text-gray-600 mt-1">{currentText.subtitle}</p>
+          </div>
+          <div className="flex items-center">
+            <div className="mr-6">
+              <label htmlFor="language-select" className="mr-2 text-sm font-medium text-gray-700">{currentText.languageSelector}</label>
+              <select id="language-select" value={language} onChange={(e) => setLanguage(e.target.value)} className="p-2 border border-gray-300 rounded-md shadow-sm text-black text-sm">
+                <option value="en">English</option><option value="hi">हिंदी</option><option value="kn">ಕನ್ನಡ</option><option value="ta">தமிழ்</option>
+              </select>
+            </div>
+            <button onClick={handleLogout} className="text-sm font-medium text-gray-600 hover:text-red-600 bg-gray-100 hover:bg-red-100 px-3 py-2 rounded-md transition-colors">
+              Logout
+            </button>
+          </div>
         </div>
 
         <div className="border-b border-gray-200 mb-4">
@@ -541,21 +625,20 @@ export default function Home() {
 
       </div>
 
-      {/* Reminder Modal (UPDATED to show duration) */}
       {isModalOpen && selectedMedication && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center">
           <div className="bg-white p-8 rounded-lg shadow-xl max-w-sm w-full">
             <h3 className="text-xl font-semibold mb-4">Set Reminder for {selectedMedication.name}</h3>
-            
+
             <p className="text-gray-600 mb-2">
-                {currentText.modalDuration} 
-                <strong className="text-indigo-600">{selectedMedication.duration_days} days</strong>
+              {currentText.modalDuration}
+              <strong className="text-indigo-600">{selectedMedication.duration_days} days</strong>
             </p>
             <p className="text-gray-600 mb-4 text-sm">
               {currentText.modalNote}
-              {language === 'en' ? `${selectedMedication.duration_days} days.` : `${selectedMedication.duration_days} ದಿನಗಳ ನಂತರ.` /* Crude translation for 'days' end */}
+              {language === 'en' ? `${selectedMedication.duration_days} days.` : `${selectedMedication.duration_days} days.`}
             </p>
-            
+
             <input type="time" value={reminderTime} onChange={(e) => setReminderTime(e.target.value)} className="w-full p-2 border border-gray-300 rounded-md mb-6" />
             <div className="flex justify-end space-x-4">
               <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300">Cancel</button>

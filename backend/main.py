@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 import os
 import json
 from langchain_google_genai import ChatGoogleGenerativeAI
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 import io
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
@@ -15,8 +16,9 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # --- Google Calendar & Maps API Imports ---
 import os.path
-from google.auth.transport.requests import Request
+from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow # CORRECTED IMPORT
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import pytz
@@ -27,8 +29,7 @@ from pathlib import Path
 
 
 # --- Setup ---
-# CORRECTED: Use pathlib to build a robust, absolute path to the .env.local file
-# This tells your backend to look inside the 'frontend' folder for the keys.
+# This pathing is correct and remains unchanged
 backend_dir = Path(__file__).resolve().parent
 project_root = backend_dir.parent
 dotenv_path = project_root / "frontend" / ".env.local"
@@ -43,14 +44,22 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 api_key = os.getenv("GOOGLE_API_KEY")
 maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
 
-if not api_key:
-    raise ValueError("ERROR: GOOGLE_API_KEY is not set. Please check your .env.local file in the frontend directory.")
+# NOTE: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are no longer loaded from .env.local
+# They will be read from credentials.json directly.
+
+if not api_key or not maps_api_key:
+    raise ValueError("ERROR: GOOGLE_API_KEY or GOOGLE_MAPS_API_KEY is not set. Please check your .env.local file.")
 
 
 # --- Google Calendar Configuration ---
 TIMEZONE = "Asia/Kolkata"
 CALENDAR_ID = 'primary'
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "openid",
+]
 
 # --- LangChain Model Initialization ---
 llm = ChatGoogleGenerativeAI( model="gemini-2.5-flash", temperature=0, google_api_key=api_key )
@@ -66,32 +75,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Service Initializations ---
-def get_calendar_service():
-    creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            with open('token.json', 'w') as token: token.write(creds.to_json())
-        else:
-            raise HTTPException(status_code=503, detail="Google Calendar is not authenticated.")
-    return build('calendar', 'v3', credentials=creds)
-
-try:
-    CALENDAR_SERVICE = get_calendar_service()
-except HTTPException as e:
-    print(f"Initialization Warning: {e.detail}")
-    CALENDAR_SERVICE = None
 
 # --- Pydantic Models ---
 class MedicationList(BaseModel): medications: List[str]
-class ReminderRequest(BaseModel): name: str; instruction: str; time: str; days_duration: int
+class ReminderRequest(BaseModel): name: str; instruction: str; time: str; days_duration: int; access_token: str
 class TranslationRequest(BaseModel): content: Dict[str, Any]; target_language: str
 class ChatRequest(BaseModel): messages: List[Dict[str, str]]; analysis_data: Optional[Dict[str, Any]] = None
 class LocationRequest(BaseModel): latitude: float; longitude: float
-class ReanalysisRequest(BaseModel): edited_text: str # New model for re-analysis
+class ReanalysisRequest(BaseModel): edited_text: str
+class RefreshTokenRequest(BaseModel): refresh_token: str
 
 # --- Analysis Prompt ---
 ANALYSIS_PROMPT_TEMPLATE = """
@@ -152,12 +144,10 @@ def get_analysis_from_text(text: str):
         cleaned_response = response.content.strip().replace("```json", "").replace("```", "")
         if not cleaned_response: raise ValueError("LLM returned empty analysis.")
         
-        # Validate the structure before returning
         data = json.loads(cleaned_response)
         if not isinstance(data.get("medications"), list):
-             raise KeyError("JSON missing 'medications' list.")
-             
-        # Optional: Basic check to ensure the new field is present
+              raise KeyError("JSON missing 'medications' list.")
+              
         for med in data["medications"]:
             if "duration_days" not in med:
                 print("WARNING: Missing 'duration_days' key in a medication object.")
@@ -175,6 +165,88 @@ def get_analysis_from_text(text: str):
         raise HTTPException(status_code=500, detail="Could not get a valid analysis from the AI model.")
 
 
+# --- CORRECTED OAUTH 2.0 AUTHENTICATION FLOW ---
+
+@app.get("/auth/login")
+def login_with_google():
+    """Redirects the user to Google's login page using credentials.json."""
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    
+    try:
+        # Load client secrets from the credentials.json file
+        with open('credentials.json', 'r') as f:
+            client_secrets_config = json.load(f)
+
+        flow = Flow.from_client_config(
+            client_config=client_secrets_config,
+            scopes=SCOPES,
+            redirect_uri="http://localhost:8000/auth/callback"
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="credentials.json not found. Make sure it's in the backend directory.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create auth flow: {str(e)}")
+        
+    authorization_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    
+    return RedirectResponse(authorization_url)
+
+
+@app.get("/auth/callback")
+def auth_callback(request: Request):
+    """Handles the redirect from Google after user login."""
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+    
+    try:
+        with open('credentials.json', 'r') as f:
+            client_secrets_config = json.load(f)
+
+        flow = Flow.from_client_config(
+            client_config=client_secrets_config,
+            scopes=SCOPES,
+            redirect_uri="http://localhost:8000/auth/callback",
+        )
+        
+        flow.fetch_token(authorization_response=str(request.url))
+        credentials = flow.credentials
+        access_token = credentials.token
+        refresh_token = credentials.refresh_token
+
+        user_info_service = build('oauth2', 'v2', credentials=credentials)
+        user_info = user_info_service.userinfo().get().execute()
+        email = user_info.get('email')
+        
+        redirect_url = f"http://localhost:3000/#access_token={access_token}&refresh_token={refresh_token}&email={email}"
+        return RedirectResponse(redirect_url)
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="credentials.json not found.")
+    except Exception as e:
+        print(f"Error in auth callback: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred during authentication callback: {str(e)}")
+
+@app.post("/auth/refresh")
+def refresh_token(request: RefreshTokenRequest):
+    """Refreshes an expired access token using a refresh token."""
+    try:
+        with open('credentials.json', 'r') as f:
+            client_secrets_config = json.load(f)
+
+        creds = Credentials(
+            None,
+            refresh_token=request.refresh_token,
+            token_uri=client_secrets_config["web"]["token_uri"],
+            client_id=client_secrets_config["web"]["client_id"],
+            client_secret=client_secrets_config["web"]["client_secret"],
+            scopes=SCOPES,
+        )
+        creds.refresh(GoogleRequest())
+        return {"access_token": creds.token}
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="credentials.json not found.")
+    except Exception as e:
+        print(f"Error refreshing token: {e}")
+        raise HTTPException(status_code=401, detail="Could not refresh token. Please log in again.")
+
 # --- API Endpoints ---
 @app.post("/analyze")
 async def analyze_endpoint(file: UploadFile = File(...)):
@@ -188,7 +260,6 @@ async def analyze_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An internal server error occurred: {str(e)}")
 
-# New endpoint for re-analyzing edited text
 @app.post("/re-analyze")
 async def reanalyze_endpoint(request: ReanalysisRequest):
     return get_analysis_from_text(request.edited_text)
@@ -227,57 +298,37 @@ async def summarize_endpoint(medication_list: MedicationList):
 
 @app.post("/set-reminder")
 async def set_reminder_endpoint(reminder_data: ReminderRequest):
-    global CALENDAR_SERVICE
-    if not CALENDAR_SERVICE:
-        try:
-            CALENDAR_SERVICE = get_calendar_service()
-        except HTTPException:
-            raise HTTPException(status_code=503, detail="Google Calendar service is unavailable. Please run calendar_auth.py to authenticate.")
+    if not reminder_data.access_token:
+        raise HTTPException(status_code=401, detail="Missing authentication token.")
 
     if reminder_data.days_duration <= 0:
-         raise HTTPException(status_code=400, detail="Medication duration must be 1 day or more.")
-
+       raise HTTPException(status_code=400, detail="Medication duration must be 1 day or more.")
+       
     try:
-        # Use pytz to handle timezone conversion correctly
+        creds = Credentials(token=reminder_data.access_token)
+        service = build('calendar', 'v3', credentials=creds)
+
         local_tz = pytz.timezone(TIMEZONE)
         today = datetime.now(local_tz).date()
         hour, minute = map(int, reminder_data.time.split(':'))
-        
-        # Start time of the *first* event instance
         start_datetime = local_tz.localize(datetime(today.year, today.month, today.day, hour, minute))
         end_datetime = start_datetime + timedelta(minutes=30) 
         
-        # --- CALCULATE UNTIL DATE ---
-        # The recurrence stops *after* the final day's occurrence.
-        # We calculate the date of the LAST DOSE (which is today + duration - 1) 
-        # and set the UNTIL time to 23:59:59 on that date.
-        
-        # Calculate the date of the last day the medication should be taken
         last_dose_date = start_datetime.date() + timedelta(days=reminder_data.days_duration - 1)
-        
-        # Set the UNTIL datetime to the very end of the last dose day, converted to UTC
-        utc_end_of_day = local_tz.localize(datetime(last_dose_date.year, 
-                                                    last_dose_date.month, 
-                                                    last_dose_date.day, 
-                                                    23, 59, 59)).astimezone(pytz.utc)
-
-        # RRULE format requires YYYYMMDDTTHHMMSSZ (UTC)
+        utc_end_of_day = local_tz.localize(datetime(last_dose_date.year, last_dose_date.month, last_dose_date.day, 23, 59, 59)).astimezone(pytz.utc)
         until_string = utc_end_of_day.strftime('%Y%m%dT%H%M%SZ')
-
         rrule = f'RRULE:FREQ=DAILY;INTERVAL=1;UNTIL={until_string}'
         
-        # ---------------------------
-
         event = { 
             'summary': f"Medication Reminder: Take {reminder_data.name}", 
             'description': f"Dosage/Instruction: {reminder_data.instruction} (Duration: {reminder_data.days_duration} days)", 
             'start': {'dateTime': start_datetime.isoformat(), 'timeZone': TIMEZONE}, 
             'end': {'dateTime': end_datetime.isoformat(), 'timeZone': TIMEZONE}, 
             'reminders': {'useDefault': False, 'overrides': [{'method': 'popup', 'minutes': 10}]}, 
-            'recurrence': [rrule] # Use the calculated RRULE with UNTIL
+            'recurrence': [rrule]
         }
         
-        inserted_event = CALENDAR_SERVICE.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        inserted_event = service.events().insert(calendarId='primary', body=event).execute()
         
         return { 
             "status": "success", 
@@ -287,11 +338,11 @@ async def set_reminder_endpoint(reminder_data: ReminderRequest):
         }
     except Exception as e:
         print(f"Google Calendar API Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create event in Google Calendar: {str(e)}")
+        raise HTTPException(status_code=401, detail=f"Failed to create event. Your login may have expired. Please log in again.")
+
 
 @app.post("/translate")
 async def translate_endpoint(request: TranslationRequest):
-    # ... (Translation logic remains the same)
     if not request.content:
         raise HTTPException(status_code=400, detail="No content provided for translation.")
 
@@ -324,7 +375,6 @@ async def translate_endpoint(request: TranslationRequest):
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    # ... (Chat logic remains the same)
     context_str = "No prescription data available."
     if request.analysis_data:
         context_str = f"The user's current prescription analysis is:\n{json.dumps(request.analysis_data, indent=2)}"
@@ -358,7 +408,6 @@ async def chat_endpoint(request: ChatRequest):
 
 @app.post("/find-pharmacies")
 async def find_pharmacies_endpoint(location: LocationRequest):
-    # ... (Pharmacy finding logic remains the same)
     if not maps_api_key:
         raise HTTPException(status_code=503, detail="Google Maps API key is not configured on the server.")
     

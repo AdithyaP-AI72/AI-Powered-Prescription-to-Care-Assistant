@@ -12,7 +12,6 @@ service_key.json
 # ===============================================
 # Virtual Environment Folder (Often created in the root or /backend)
 .venv/
-env/
 venv/
 
 # Bytecode files and Cache Folders

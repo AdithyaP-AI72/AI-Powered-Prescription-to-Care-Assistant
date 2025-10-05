@@ -18,7 +18,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 import os.path
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow # CORRECTED IMPORT
+from google_auth_oauthlib.flow import Flow 
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import pytz
@@ -29,7 +29,6 @@ from pathlib import Path
 
 
 # --- Setup ---
-# This pathing is correct and remains unchanged
 backend_dir = Path(__file__).resolve().parent
 project_root = backend_dir.parent
 dotenv_path = project_root / "frontend" / ".env.local"
@@ -44,8 +43,6 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 api_key = os.getenv("GOOGLE_API_KEY")
 maps_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
 
-# NOTE: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are no longer loaded from .env.local
-# They will be read from credentials.json directly.
 
 if not api_key or not maps_api_key:
     raise ValueError("ERROR: GOOGLE_API_KEY or GOOGLE_MAPS_API_KEY is not set. Please check your .env.local file.")
@@ -146,8 +143,8 @@ def get_analysis_from_text(text: str):
         
         data = json.loads(cleaned_response)
         if not isinstance(data.get("medications"), list):
-              raise KeyError("JSON missing 'medications' list.")
-              
+                raise KeyError("JSON missing 'medications' list.")
+                
         for med in data["medications"]:
             if "duration_days" not in med:
                 print("WARNING: Missing 'duration_days' key in a medication object.")
@@ -165,7 +162,7 @@ def get_analysis_from_text(text: str):
         raise HTTPException(status_code=500, detail="Could not get a valid analysis from the AI model.")
 
 
-# --- CORRECTED OAUTH 2.0 AUTHENTICATION FLOW ---
+# --- OAUTH 2.0 AUTHENTICATION FLOW ---
 
 @app.get("/auth/login")
 def login_with_google():
@@ -173,12 +170,8 @@ def login_with_google():
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
     
     try:
-        # Load client secrets from the credentials.json file
-        with open('credentials.json', 'r') as f:
-            client_secrets_config = json.load(f)
-
-        flow = Flow.from_client_config(
-            client_config=client_secrets_config,
+        flow = Flow.from_client_secrets_file(
+            'credentials.json',
             scopes=SCOPES,
             redirect_uri="http://localhost:8000/auth/callback"
         )
@@ -198,11 +191,8 @@ def auth_callback(request: Request):
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
     
     try:
-        with open('credentials.json', 'r') as f:
-            client_secrets_config = json.load(f)
-
-        flow = Flow.from_client_config(
-            client_config=client_secrets_config,
+        flow = Flow.from_client_secrets_file(
+            'credentials.json',
             scopes=SCOPES,
             redirect_uri="http://localhost:8000/auth/callback",
         )
@@ -229,14 +219,14 @@ def refresh_token(request: RefreshTokenRequest):
     """Refreshes an expired access token using a refresh token."""
     try:
         with open('credentials.json', 'r') as f:
-            client_secrets_config = json.load(f)
+            client_secrets_config = json.load(f)["web"]
 
         creds = Credentials(
             None,
             refresh_token=request.refresh_token,
-            token_uri=client_secrets_config["web"]["token_uri"],
-            client_id=client_secrets_config["web"]["client_id"],
-            client_secret=client_secrets_config["web"]["client_secret"],
+            token_uri=client_secrets_config["token_uri"],
+            client_id=client_secrets_config["client_id"],
+            client_secret=client_secrets_config["client_secret"],
             scopes=SCOPES,
         )
         creds.refresh(GoogleRequest())
@@ -303,7 +293,7 @@ async def set_reminder_endpoint(reminder_data: ReminderRequest):
 
     if reminder_data.days_duration <= 0:
        raise HTTPException(status_code=400, detail="Medication duration must be 1 day or more.")
-       
+        
     try:
         creds = Credentials(token=reminder_data.access_token)
         service = build('calendar', 'v3', credentials=creds)

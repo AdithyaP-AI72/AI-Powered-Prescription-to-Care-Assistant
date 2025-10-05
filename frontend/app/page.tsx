@@ -6,23 +6,21 @@ import AnalysisTab from './components/AnalysisTab';
 import RemindersTab from './components/RemindersTab';
 import AssistantTab from './components/AssistantTab';
 import PharmaciesTab from './components/PharmaciesTab';
-import LoginScreen from './components/LoginScreen'; // New import
+import LoginScreen from './components/LoginScreen';
 
-// --- TypeScript Interfaces (UPDATED for Duration) ---
-// NOTE: Must match the output of the /analyze endpoint (which now includes duration_days)
+// --- TypeScript Interfaces ---
 export interface Medication {
   name: string;
   dosage: string;
   instruction: string;
-  duration_days: number; // ADDED: Must be present in AI's JSON output
+  duration_days: number;
 }
 export interface AnalysisResult { medications: Medication[]; advice: string; }
 export interface SummaryResult { summary: string; health_tips: string[]; food_interactions: string[]; }
 export interface Reminder { id: string; medicineName: string; time: string; calendarLink: string; }
 export interface ChatMessage { sender: 'user' | 'ai'; text: string; }
 export interface Pharmacy { name: string; address: string; phone: string; geometry?: { location: { lat: number; lng: number; } } }
-export interface Location { lat: number; lng: number; } // For user location
-// NEW Interfaces for Auth and User
+export interface Location { lat: number; lng: number; }
 export interface User { email: string; }
 export interface AuthData {
   accessToken: string;
@@ -47,7 +45,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     medicine: "Medicine",
     dosage: "Dosage",
     instruction: "Instruction",
-    duration: "Duration", // ADDED for table header
+    duration: "Duration",
     reminders: "Reminders",
     setReminderButton: "Set Google Reminder",
     doctorsAdvice: "Doctor's Advice",
@@ -62,7 +60,6 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     chatPlaceholder: "Ask about your medication...",
     chatHeader: "Healthcare Agent",
     initialChatMessage: "Hello! I am your AI Healthcare Agent. Once you have analyzed a prescription, you can ask me questions about it.",
-    // New Modal Text
     modalDuration: "Duration:",
     modalNote: "A daily recurring event will be created in your Google Calendar and will stop automatically after ",
   },
@@ -81,7 +78,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     medicine: "दवा",
     dosage: "खुराक",
     instruction: "निर्देश",
-    duration: "अवधि", // ADDED
+    duration: "अवधि",
     reminders: "अनुस्मारक",
     setReminderButton: "गूगल रिमाइंडर सेट करें",
     doctorsAdvice: "डॉक्टर की सलाह",
@@ -96,7 +93,6 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     chatPlaceholder: "अपनी दवा के बारे में पूछें...",
     chatHeader: "हेल्थकेयर एजेंट",
     initialChatMessage: "नमस्ते! मैं आपका AI हेल्थकेयर एजेंट हूँ। एक बार जब आप प्रिस्क्रिप्शन का विश्लेषण कर लेते हैं, तो आप मुझसे इसके बारे में प्रश्न पूछ सकते हैं।",
-    // New Modal Text
     modalDuration: "अवधि:",
     modalNote: "आपके गूगल कैलेंडर में चयनित समय पर एक दैनिक आवर्ती ईवेंट बनाया जाएगा और यह स्वचालित रूप से ",
   },
@@ -115,7 +111,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     medicine: "ಔಷಧಿ",
     dosage: "ಡೋಸೇಜ್",
     instruction: "ಸೂಚನೆ",
-    duration: "ಅವಧಿ", // ADDED
+    duration: "ಅವಧಿ",
     reminders: "ಜ್ಞಾಪನೆಗಳು",
     setReminderButton: "ಗೂಗಲ್ ಜ್ಞಾಪನೆ ಹೊಂದಿಸಿ",
     doctorsAdvice: "ವೈದ್ಯರ ಸಲಹೆ",
@@ -130,7 +126,6 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     chatPlaceholder: "ನಿಮ್ಮ ಔಷಧಿ ಬಗ್ಗೆ ಕೇಳಿ...",
     chatHeader: "ಆರೋಗ್ಯ ಏಜೆಂಟ್",
     initialChatMessage: "ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ AI ಆರೋಗ್ಯ ಏಜೆಂಟ್. ನೀವು ಪ್ರಿಸ್ಕ್ರಿಪ್ಷನ್ ಅನ್ನು ವಿಶ್ಲೇಷಿಸಿದ ನಂತರ, ನೀವು ಅದರ ಬಗ್ಗೆ ನನಗೆ ಪ್ರಶ್ನೆಗಳನ್ನು ಕೇಳಬಹುದು.",
-    // New Modal Text
     modalDuration: "ಅವಧಿ:",
     modalNote: "ಆಯ್ದ ಸಮಯದಲ್ಲಿ ನಿಮ್ಮ Google ಕ್ಯಾಲೆಂಡರ್‌ನಲ್ಲಿ ದೈನಂದಿನ ಮರುಕಳಿಸುವ ಈವೆಂಟ್ ಅನ್ನು ರಚಿಸಲಾಗುತ್ತದೆ ಮತ್ತು ಅದು ಸ್ವಯಂಚಾಲಿತವಾಗಿ ",
   },
@@ -149,7 +144,7 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     medicine: "மருந்து",
     dosage: "மருந்தளவு",
     instruction: "வழிமுறை",
-    duration: "காலம்", // ADDED
+    duration: "காலம்",
     reminders: "நினைவூட்டல்கள்",
     setReminderButton: "கூகிள் நினைவூட்டலை அமைக்கவும்",
     doctorsAdvice: "மருத்துவரின் ஆலோசனை",
@@ -164,7 +159,6 @@ const uiText: { [key: string]: { [key: string]: string } } = {
     chatPlaceholder: "உங்கள் மருந்து பற்றி கேளுங்கள்...",
     chatHeader: "சுகாதார முகவர்",
     initialChatMessage: "வணக்கம்! நான் உங்கள் AI சுகாதார முகவர். நீங்கள் ஒரு மருந்துச்சீட்டை பகுப்பாய்வு செய்தவுடன், அதைப் பற்றி என்னிடம் கேள்விகளைக் கேட்கலாம்.",
-    // New Modal Text
     modalDuration: "காலம்:",
     modalNote: "உங்கள் கூகிள் கேலெண்டரில் தேர்ந்தெடுக்கப்பட்ட நேரத்தில் ஒரு தினசரி மீண்டும் மீண்டும் வரும் நிகழ்வு உருவாக்கப்படும், மேலும் இது தானாகவே ",
   },
@@ -412,6 +406,7 @@ export default function Home() {
       return newAuthData;
     } catch (e) {
       console.error("Token refresh failed:", e);
+      alert("Your session has expired. Please log in again.");
       handleLogout(); // Log out user if refresh fails
       return null;
     }
@@ -542,17 +537,19 @@ export default function Home() {
     );
   };
 
+  // --- MODIFIED LOGOUT FUNCTION ---
   const handleLogout = () => {
+    // Clear the auth data from state and localStorage to end the session
     setAuthData(null);
     localStorage.removeItem("authData");
-    // Also clear the app state for the logged-out user
-    if (authData?.user.email) {
-      localStorage.removeItem(`appState-${authData.user.email}`);
-    }
-    // Also clear the current state to ensure a clean slate
+
+    // Clear the current React state to reset the UI, but DO NOT remove the saved app state from localStorage
     setAnalysisResult(null);
     setSummaryResult(null);
     setReminders([]);
+    setFile(null);
+    setError(null);
+    setSummaryError(null);
   };
 
   const displayAnalysis = translatedAnalysis || analysisResult;

@@ -1,4 +1,4 @@
-##Prescription to Personal Care Assistant
+#Prescription to Personal Care Assistant
 This is an AI-powered web application that analyzes medical prescriptions, provides health insights, sets medication reminders, finds nearby pharmacies, and offers a conversational AI assistant for health-related questions.
 
 Features

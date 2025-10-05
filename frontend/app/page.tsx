@@ -447,6 +447,21 @@ export default function Home() {
     setReminders(prev => prev.filter(r => r.id !== reminderId));
   };
 
+  // --- NEW: FUNCTION TO DELETE A PRESCRIPTION ---
+  const handleDeletePrescription = (idToDelete: string) => {
+    if (!window.confirm("Are you sure you want to delete this prescription? This cannot be undone.")) {
+      return;
+    }
+    const remainingPrescriptions = prescriptions.filter(p => p.id !== idToDelete);
+    setPrescriptions(remainingPrescriptions);
+
+    // If the deleted prescription was the active one, pick a new active one.
+    if (activePrescriptionId === idToDelete) {
+      const newActiveId = remainingPrescriptions[0]?.id || null;
+      setActivePrescriptionId(newActiveId);
+    }
+  };
+
   const handleSendMessage = async () => {
     const userMessage = currentMessage.trim();
     if (!userMessage) return;
@@ -539,6 +554,7 @@ export default function Home() {
           prescriptions={prescriptions}
           activePrescriptionId={activePrescriptionId}
           setActivePrescriptionId={setActivePrescriptionId}
+          handleDeletePrescription={handleDeletePrescription}
         />;
       case 'reminders':
         return <RemindersTab reminders={reminders} handleDeleteReminder={handleDeleteReminder} currentText={currentText} />;
@@ -562,6 +578,7 @@ export default function Home() {
           prescriptions={prescriptions}
           activePrescriptionId={activePrescriptionId}
           setActivePrescriptionId={setActivePrescriptionId}
+          handleDeletePrescription={handleDeletePrescription}
         />;
     }
   };

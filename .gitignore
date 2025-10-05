@@ -2,11 +2,8 @@
 # 1. AUTHENTICATION SECRETS AND ENVIRONMENT FILES
 # CRITICAL: DO NOT COMMIT THESE!
 # ===============================================
-.env
-*.env
 # Google Calendar API Specific Tokens/Keys
 token.json
-credentials.json
 service_key.json
 
 
